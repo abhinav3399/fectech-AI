@@ -1,0 +1,15 @@
+# Vercel can only host the frontend. Exclude the heavy Python ML backend so
+# Vercel doesn't try to bundle it (that caused the 7.5 GB > 500 MB failure).
+/app
+/scripts
+/tests
+/static
+/venv
+/requirements.txt
+/render_build.sh
+/debug_cloud.py
+/model.glb
+/yolov8n.pt
+/qdrant_storage
+/temp_uploads
+**/__pycache__
