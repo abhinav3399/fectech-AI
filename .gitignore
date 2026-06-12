@@ -1,0 +1,38 @@
+# --- Secrets & environment (NEVER commit) ---
+.env
+.env.local
+.env.*.local
+frontend/.env
+# keep the template
+!.env.example
+
+# --- Python ---
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Node / frontend ---
+node_modules/
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# --- Runtime / generated data ---
+qdrant_storage/
+static/models/
+temp_uploads/
+photo/
+audio/
+*.log
+
+# --- Auto-downloaded model weights (regenerated on first run) ---
+yolov8n.pt
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
