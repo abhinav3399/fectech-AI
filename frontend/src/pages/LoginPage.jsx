@@ -38,21 +38,24 @@ const LoginPage = ({ onSelectRole }) => {
             <style>{`
         .login-container {
             min-height: 100vh;
-            background: #0f172a;
             display: flex;
             align-items: center;
             justify-content: center;
             position: relative;
             overflow: hidden;
-            font-family: system-ui, sans-serif;
+            font-family: inherit;
+            color: var(--text);
+            padding: var(--s-6);
         }
         .bg-glow {
             position: absolute;
-            width: 800px;
-            height: 800px;
-            background: rgba(124, 58, 237, 0.1);
+            width: 900px;
+            height: 900px;
+            background:
+                radial-gradient(circle at 35% 35%, rgba(139, 92, 246, 0.22), transparent 60%),
+                radial-gradient(circle at 70% 65%, rgba(59, 130, 246, 0.18), transparent 60%);
             border-radius: 50%;
-            filter: blur(100px);
+            filter: blur(110px);
             z-index: 0;
             pointer-events: none;
         }
@@ -61,55 +64,77 @@ const LoginPage = ({ onSelectRole }) => {
             z-index: 10;
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 40px;
+            gap: var(--s-8);
             width: 100%;
             max-width: 900px;
-            padding: 20px;
+            padding: var(--s-5);
+            animation: ui-fade-up 0.6s var(--ease) both;
         }
         .role-card {
-            background: rgba(30, 41, 59, 0.5);
-            border: 1px solid #334155;
-            padding: 40px;
-            border-radius: 24px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            padding: var(--s-10);
+            border-radius: var(--r-xl);
             cursor: pointer;
             text-align: center;
-            transition: 0.3s;
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(14px);
+            box-shadow: var(--shadow-md);
+            position: relative;
+            overflow: hidden;
+            transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
         }
-        .role-card:hover { transform: translateY(-10px); }
-        .patient-card:hover { border-color: #8b5cf6; background: rgba(30, 41, 59, 0.8); }
-        .caregiver-card:hover { border-color: #10b981; background: rgba(30, 41, 59, 0.8); }
+        .role-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--grad-brand-soft);
+            opacity: 0;
+            transition: opacity var(--dur) var(--ease);
+            pointer-events: none;
+        }
+        .role-card:hover { transform: translateY(-8px); box-shadow: var(--shadow-lg); }
+        .patient-card:hover { border-color: rgba(139, 92, 246, 0.55); }
+        .caregiver-card:hover { border-color: rgba(52, 211, 153, 0.55); }
+        .role-card:hover::before { opacity: 1; }
 
         .icon-wrapper {
             width: 100px;
             height: 100px;
-            border-radius: 50%;
-            margin: 0 auto 25px;
+            border-radius: var(--r-pill);
+            margin: 0 auto var(--s-6);
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            box-shadow: var(--shadow-md);
+            position: relative;
+            z-index: 1;
+            transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
         }
-        .patient-icon { background: linear-gradient(135deg, #8b5cf6, #3b82f6); }
-        .caregiver-icon { background: linear-gradient(135deg, #10b981, #059669); }
+        .patient-icon { background: var(--grad-brand); }
+        .caregiver-icon { background: linear-gradient(135deg, var(--success), #059669); }
+        .patient-card:hover .patient-icon { transform: scale(1.06); box-shadow: var(--glow-brand); }
+        .caregiver-card:hover .caregiver-icon { transform: scale(1.06); box-shadow: 0 10px 36px rgba(16, 185, 129, 0.38); }
 
-        .role-title { color: white; margin: 0 0 10px; font-size: 2rem; }
-        .role-desc { color: #94a3b8; font-size: 1.1rem; line-height: 1.5; }
+        .role-title { position: relative; z-index: 1; color: var(--text); margin: 0 0 var(--s-3); font-size: var(--fs-xl); font-weight: 800; letter-spacing: -0.01em; }
+        .role-desc { position: relative; z-index: 1; color: var(--text-muted); font-size: var(--fs-md); line-height: 1.6; }
 
-        .role-btn-wrapper { margin-top: 30px; }
+        .role-btn-wrapper { position: relative; z-index: 1; margin-top: var(--s-8); }
         .role-btn {
-            padding: 10px 25px;
-            border-radius: 30px;
-            border: 1px solid rgba(255,255,255,0.2);
-            color: white;
-            transition: 0.2s;
+            padding: 12px 26px;
+            border-radius: var(--r-pill);
+            border: 1px solid var(--border-strong);
+            background: var(--surface-2);
+            color: var(--text);
+            font-weight: 700;
+            font-size: var(--fs-sm);
+            transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), color var(--dur) var(--ease);
             display: inline-block;
         }
-        .patient-card:hover .patient-btn { background: #8b5cf6; border-color: #8b5cf6; }
-        .caregiver-card:hover .caregiver-btn { background: #10b981; border-color: #10b981; }
+        .patient-card:hover .patient-btn { background: var(--grad-brand); border-color: transparent; box-shadow: var(--glow-brand); color: var(--text-on-brand); }
+        .caregiver-card:hover .caregiver-btn { background: linear-gradient(135deg, var(--success), #059669); border-color: transparent; box-shadow: 0 10px 36px rgba(16, 185, 129, 0.38); color: #04211a; }
 
         @media (max-width: 768px) {
-            .cards-wrapper { grid-template-columns: 1fr; }
+            .cards-wrapper { grid-template-columns: 1fr; gap: var(--s-5); }
         }
       `}</style>
         </div>

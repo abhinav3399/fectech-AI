@@ -2,26 +2,247 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================================
+   Factech AI — Design System (single source of truth)
+   Bold-modern dark theme. Every screen reads from these tokens; no screen
+   should hardcode brand colors, radii, shadows, or spacing anymore.
+   ========================================================================= */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color-scheme: dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #0f172a;
-  /* Match App.jsx var(--bg) */
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    /* Brand / accent ----------------------------------------------------- */
+    --brand-1: #8b5cf6;        /* violet  */
+    --brand-2: #6366f1;        /* indigo  */
+    --brand-3: #3b82f6;        /* blue    */
+    --accent-cyan: #22d3ee;
+    --accent-pink: #f472b6;
+    --grad-brand: linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #3b82f6 100%);
+    --grad-brand-soft: linear-gradient(135deg, rgba(139, 92, 246, 0.22), rgba(59, 130, 246, 0.22));
+    --grad-text: linear-gradient(90deg, #c4b5fd, #93c5fd);
+
+    /* Surfaces (dark, glassy) ------------------------------------------- */
+    --bg: #05070a;             /* deep navy (design-system base) */
+    --bg-2: #0f172a;
+    --surface-1: rgba(255, 255, 255, 0.035);
+    --surface-2: rgba(255, 255, 255, 0.06);
+    --surface-3: rgba(255, 255, 255, 0.10);
+    --glass: rgba(18, 26, 48, 0.55);
+    --glass-strong: rgba(15, 22, 41, 0.82);
+    --border: rgba(255, 255, 255, 0.10);
+    --border-strong: rgba(255, 255, 255, 0.18);
+    --ring: rgba(139, 92, 246, 0.55);
+
+    /* Text --------------------------------------------------------------- */
+    --text: #f8fafc;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+    --text-on-brand: #ffffff;
+
+    /* Status ------------------------------------------------------------- */
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #f87171;
+
+    /* Radius — design system: inputs 16, buttons 24, cards 32 ------------ */
+    --r-sm: 12px;
+    --r-md: 16px;
+    --r-lg: 24px;
+    --r-xl: 32px;
+    --r-pill: 999px;
+
+    /* Spacing scale ------------------------------------------------------ */
+    --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+    --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px;
+
+    /* Shadows ------------------------------------------------------------ */
+    --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.28);
+    --shadow-md: 0 12px 34px rgba(0, 0, 0, 0.38);
+    --shadow-lg: 0 28px 64px rgba(0, 0, 0, 0.55);
+    --glow-brand: 0 10px 36px rgba(124, 58, 237, 0.38);
+
+    /* Type scale --- all multiplied by --fs-scale, which the Text-size control
+       (lib/a11y.js) sets on <html> for presbyopic users — the whole app scales. */
+    --fs-scale: 1;
+    --fs-xs: calc(0.78rem * var(--fs-scale)); --fs-sm: calc(0.88rem * var(--fs-scale));
+    --fs-md: calc(1rem * var(--fs-scale)); --fs-lg: calc(1.2rem * var(--fs-scale));
+    --fs-xl: calc(1.6rem * var(--fs-scale)); --fs-2xl: calc(2.2rem * var(--fs-scale));
+    --fs-3xl: calc(2.9rem * var(--fs-scale));
+
+    /* Motion ------------------------------------------------------------- */
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --dur: 0.22s;
+
+    font-family: 'Plus Jakarta Sans', system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    font-weight: 400;
+    color-scheme: dark;
+    color: var(--text);
+    background-color: var(--bg);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
+
+/* ---- Light theme: override the tokens; toggled via data-theme="light" on <html>. ---- */
+:root[data-theme="light"] {
+    --bg: #eef2f8;
+    --bg-2: #ffffff;
+    --surface-1: rgba(15, 23, 42, 0.035);
+    --surface-2: rgba(15, 23, 42, 0.06);
+    --surface-3: rgba(15, 23, 42, 0.10);
+    --glass: rgba(255, 255, 255, 0.74);
+    --glass-strong: rgba(255, 255, 255, 0.92);
+    --border: rgba(15, 23, 42, 0.10);
+    --border-strong: rgba(15, 23, 42, 0.16);
+    --ring: rgba(139, 92, 246, 0.40);
+
+    --text: #1e293b;
+    --text-muted: #475569;
+    --text-dim: #7b8aa3;
+    --grad-text: linear-gradient(90deg, #7c3aed, #2563eb);
+
+    --shadow-sm: 0 2px 10px rgba(15, 23, 42, 0.08);
+    --shadow-md: 0 12px 30px rgba(15, 23, 42, 0.10);
+    --shadow-lg: 0 26px 60px rgba(15, 23, 42, 0.16);
+    --glow-brand: 0 10px 30px rgba(124, 58, 237, 0.22);
+
+    color-scheme: light;
+    color: var(--text);
+    background-color: var(--bg);
+}
+:root[data-theme="light"] body {
+    background:
+        radial-gradient(1200px 620px at 8% -12%, rgba(139, 92, 246, 0.10), transparent 60%),
+        radial-gradient(1000px 600px at 112% 8%, rgba(59, 130, 246, 0.08), transparent 55%),
+        radial-gradient(900px 700px at 50% 120%, rgba(99, 102, 241, 0.07), transparent 60%),
+        var(--bg);
+}
+:root[data-theme="light"] ::selection { background: rgba(139, 92, 246, 0.22); color: #1e293b; }
+:root[data-theme="light"] * { scrollbar-color: rgba(15, 23, 42, 0.25) transparent; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.20); }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.32); }
+
+*, *::before, *::after { box-sizing: border-box; }
 
 body {
-  margin: 0;
-  padding: 0;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    color: var(--text);
+    /* Depth: soft brand glows behind the app for the bold-modern feel. */
+    background:
+        radial-gradient(1200px 620px at 8% -12%, rgba(139, 92, 246, 0.20), transparent 60%),
+        radial-gradient(1000px 600px at 112% 8%, rgba(59, 130, 246, 0.16), transparent 55%),
+        radial-gradient(900px 700px at 50% 120%, rgba(99, 102, 241, 0.12), transparent 60%),
+        var(--bg);
 }
 
-/* Ensure no default flex centering interferes unless we want it */
+::selection { background: rgba(139, 92, 246, 0.35); color: #fff; }
+
+/* Consistent, slim scrollbars everywhere. */
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Visible keyboard focus (accessibility) without harming mouse users. */
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--r-sm); }
+
+h1, h2, h3, h4 { line-height: 1.15; letter-spacing: -0.01em; margin: 0; }
+
+/* =========================================================================
+   Reusable primitives — opt-in classes any screen can use for consistency.
+   ========================================================================= */
+.ui-card {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(14px);
+}
+.ui-card-hover { transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+.ui-card-hover:hover { transform: translateY(-3px); border-color: rgba(139, 92, 246, 0.45); box-shadow: var(--shadow-lg); }
+
+.ui-glass { background: var(--glass-strong); border: 1px solid var(--border); backdrop-filter: blur(16px); }
+
+.ui-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px 20px; border-radius: var(--r-md); border: 1px solid transparent;
+    font-weight: 700; font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
+    transition: transform var(--dur) var(--ease), background var(--dur) var(--ease), box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+    font-family: inherit;
+}
+.ui-btn:active { transform: translateY(1px); }
+.ui-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+.ui-btn--primary { background: var(--grad-brand); color: var(--text-on-brand); box-shadow: var(--glow-brand); }
+.ui-btn--primary:hover:not(:disabled) { box-shadow: 0 14px 44px rgba(124, 58, 237, 0.5); transform: translateY(-2px); }
+.ui-btn--ghost { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.ui-btn--ghost:hover:not(:disabled) { background: var(--surface-3); }
+.ui-btn--danger { background: linear-gradient(135deg, #f43f5e, #e11d48); color: #fff; }
+
+.ui-field { display: flex; flex-direction: column; gap: 6px; }
+.ui-field > span { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 600; }
+.ui-input, .ui-field input, .ui-field textarea, .ui-field select {
+    background: var(--glass-strong); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 12px 14px; color: var(--text); font-size: var(--fs-md); outline: none; font-family: inherit;
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.ui-input:focus, .ui-field input:focus, .ui-field textarea:focus, .ui-field select:focus {
+    border-color: var(--brand-1); box-shadow: 0 0 0 3px var(--ring);
+}
+
+.ui-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: var(--r-pill);
+    background: rgba(139, 92, 246, 0.14); border: 1px solid rgba(139, 92, 246, 0.32); color: #ddd6fe;
+    font-size: var(--fs-sm); cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.ui-chip:hover { background: rgba(139, 92, 246, 0.26); color: #fff; }
+
+.ui-pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: var(--r-pill);
+    font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+.ui-grad-text {
+    background: var(--grad-text); -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+}
+
+/* Shared entrance motion. */
+@keyframes ui-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.ui-fade-up { animation: ui-fade-up 0.5s var(--ease) both; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* =========================================================================
+   Accessibility (lib/a11y.js): user toggles on <html>.
+   ========================================================================= */
+/* Reduce motion — user-controlled, independent of the OS setting. */
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+}
+
+/* High-contrast mode — lift dim text + strengthen borders/focus to AA. */
+:root[data-contrast="high"] {
+    --text-muted: #d3dcea;
+    --text-dim: #b6c2d4;
+    --border: rgba(255, 255, 255, 0.30);
+    --border-strong: rgba(255, 255, 255, 0.46);
+    --ring: rgba(196, 181, 253, 0.95);
+}
+:root[data-theme="light"][data-contrast="high"] {
+    --text-muted: #1f2937;
+    --text-dim: #374151;
+    --border: rgba(15, 23, 42, 0.34);
+    --border-strong: rgba(15, 23, 42, 0.5);
+    --ring: rgba(109, 40, 217, 0.85);
+}
+:root[data-contrast="high"] :focus-visible { outline-width: 3px; }

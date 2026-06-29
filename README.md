@@ -18,8 +18,8 @@ Before running the project, ensure you have the following installed:
 ### 1. clone the Repository
 
 ```bash
-git clone https://github.com/krishk2/Masthishq.git
-cd Masthishq
+git clone https://github.com/abhinav3399/fectech-AI.git
+cd fectech-AI
 ```
 
 ### 2. Backend Setup (FastAPI)

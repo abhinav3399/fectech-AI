@@ -16,7 +16,9 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 NOT_CONFIGURED = {
     "status": "error",
-    "message": "3D generation isn't set up yet. Add MESHY_API_KEY to .env and restart the backend.",
+    "message": ("3D generation isn't set up yet. Configure a provider in .env "
+                "(REPLICATE_API_TOKEN for the no-GPU hosted path, MODEL_3D_URL for your "
+                "own GPU service, or MESHY_API_KEY) and restart the backend."),
 }
 
 
@@ -49,7 +51,11 @@ async def generate_3d_status(task_id: str):
     progress = task.get("progress", 0)
 
     if st == "SUCCEEDED":
-        glb = (task.get("model_urls") or {}).get("glb")
+        urls = task.get("model_urls") or {}
+        glb = urls.get("glb")
+        # STL (or 3MF) is the 3D-printable format — hand back Meshy's URL directly so the
+        # caregiver can download it for printing (it's a one-off, no need to cache locally).
+        printable = urls.get("stl") or urls.get("3mf")
         if not glb:
             return {"status": "error", "message": "Generation finished but no GLB was returned."}
         dest = os.path.join(MODELS_DIR, f"{task_id}.glb")
@@ -58,8 +64,8 @@ async def generate_3d_status(task_id: str):
                 await mesh_service.download_glb(glb, dest)
             except Exception:
                 # If we can't cache it locally, hand back Meshy's URL directly.
-                return {"status": "SUCCEEDED", "progress": 100, "model_url": glb}
-        return {"status": "SUCCEEDED", "progress": 100, "model_url": f"/static/models/{task_id}.glb"}
+                return {"status": "SUCCEEDED", "progress": 100, "model_url": glb, "printable_url": printable}
+        return {"status": "SUCCEEDED", "progress": 100, "model_url": f"/static/models/{task_id}.glb", "printable_url": printable}
 
     if st in ("FAILED", "CANCELED"):
         msg = (task.get("task_error") or {}).get("message") or "Generation failed."

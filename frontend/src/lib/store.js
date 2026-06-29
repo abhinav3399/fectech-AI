@@ -4,7 +4,8 @@
 import { useSyncExternalStore } from 'react';
 
 const KEY = 'factech_state_v1';
-const defaultState = { profile: null, persona: null, memories: [], transcript: [], reminders: [], insightsHistory: [] };
+const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
+const defaultState = { profile: null, persona: null, memories: [], transcript: [], reminders: [], insightsHistory: [], emergencyContacts: [], distressLog: [], adherence: [] };
 
 function load() {
     try {
@@ -57,13 +58,23 @@ export function addTurn(role, text) {
 export function clearTranscript() { set({ transcript: [] }); }
 
 // --- Reminders & medication ---
+const sortByTime = (arr) => [...arr].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
 export function addReminder(r) {
     const rem = {
         id: String(Date.now()) + Math.random().toString(36).slice(2, 7),
-        title: r.title, time: r.time, type: r.type || 'general', lastFired: null,
+        title: r.title, time: r.time, type: r.type || 'general',
+        description: r.description || '', frequency: r.frequency || 'daily',
+        enabled: r.enabled !== false, lastFired: null, snoozeUntil: null,
     };
-    set({ reminders: [...state.reminders, rem].sort((a, b) => a.time.localeCompare(b.time)) });
+    set({ reminders: sortByTime([...state.reminders, rem]) });
     return rem;
+}
+export function updateReminder(id, patch) {
+    set({ reminders: sortByTime(state.reminders.map((r) => (r.id === id ? { ...r, ...patch } : r))) });
+}
+export function toggleReminder(id) {
+    set({ reminders: state.reminders.map((r) => (r.id === id ? { ...r, enabled: r.enabled === false } : r)) });
 }
 export function removeReminder(id) {
     set({ reminders: state.reminders.filter((r) => r.id !== id) });
@@ -78,6 +89,33 @@ export function addInsight(ev) {
     const entry = { date: new Date().toISOString(), mood: ev.mood, engagement: ev.engagement };
     set({ insightsHistory: [...state.insightsHistory, entry].slice(-30) });
 }
+
+// --- Distress Watch: log a sustained agitation episode for the caregiver (never shown to the patient). ---
+export function addDistressEpisode(ev) {
+    if (!ev) return;
+    const entry = { ts: new Date().toISOString(), peak: ev.peak ?? 0, trigger: (ev.trigger || '').slice(0, 120), calmMode: true };
+    set({ distressLog: [...(state.distressLog || []), entry].slice(-50) });
+}
+
+// --- Medication adherence: record a reminder outcome locally + best-effort to the server. ---
+export function logAdherence({ reminderId, title, type, status }) {
+    const entry = { id: String(Date.now()) + Math.random().toString(36).slice(2, 7), reminderId, title, type, status, ts: new Date().toISOString() };
+    set({ adherence: [...(state.adherence || []), entry].slice(-500) });
+    // Fire-and-forget — never block the UI. Attributes to the account if signed in, else a kiosk id.
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        const token = localStorage.getItem('factech_token');
+        if (token) headers.Authorization = 'Bearer ' + token;
+        fetch(`${API_BASE}/adherence/log`, {
+            method: 'POST', headers,
+            body: JSON.stringify({ reminder_id: reminderId, title, type, status, kiosk_id: state.profile?.name || 'kiosk' }),
+        }).catch(() => { });
+    } catch (e) { /* offline — the local copy in store.adherence is the fallback */ }
+    return entry;
+}
+
+// --- Emergency contacts (the "Call my family" safety button) ---
+export function setEmergencyContacts(list) { set({ emergencyContacts: Array.isArray(list) ? list : [] }); }
 
 export function resetAll() { set({ ...defaultState }); }
 
