@@ -2,6 +2,27 @@ import os
 from groq import Groq
 from app.core.config import settings
 
+
+def _time_context() -> str:
+    """Gentle temporal grounding for the persona — today's weekday/date and the
+    part of the day, in the configured local timezone. Pure stdlib: no network,
+    no dependency, no data leaves the machine. Returns '' if the clock can't be
+    read, so chat is unaffected on failure."""
+    try:
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(settings.TIMEZONE))
+        except Exception:
+            now = datetime.now()  # fall back to the server's local clock
+        h = now.hour
+        part = ("early morning" if h < 6 else "morning" if h < 12
+                else "afternoon" if h < 17 else "evening" if h < 21 else "night")
+        return f"{now.strftime('%A')}, {now.strftime('%d %B %Y')}, {part} (about {now.strftime('%I:%M %p').lstrip('0')})"
+    except Exception:
+        return ""
+
+
 class LLMService:
     def __init__(self):
         self.api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
@@ -117,6 +138,57 @@ class LLMService:
             print(f"Conversation eval error: {e}")
             return None
 
+    def summarize_session(self, transcript: list, persona: dict = None, user: dict = None) -> list:
+        """Distill durable, long-term memories about the person from a finished
+        conversation. Returns up to 6 short factual sentences worth recalling in
+        future chats; empty list when there's nothing durable or the LLM is down."""
+        import json
+        non_empty = [t for t in (transcript or []) if (t.get("text") or "").strip()]
+        if not self.client or len(non_empty) < 2:
+            return []
+
+        # Same line-formatting as evaluate_conversation.
+        user_name = (user or {}).get("name") or "the person"
+        persona_name = (persona or {}).get("name") or "their companion"
+        lines = []
+        for t in transcript[-40:]:
+            who = user_name if t.get("role") == "user" else persona_name
+            txt = (t.get("text") or "").strip()
+            if txt:
+                lines.append(f"{who}: {txt}")
+        convo = "\n".join(lines)
+
+        system_prompt = (
+            "You extract durable, long-term memories about a person from a conversation "
+            "with their AI companion. Capture only things worth remembering for FUTURE chats: "
+            "people and pets they mentioned, events, feelings, preferences, plans and worries. "
+            f"Write each memory as a short third-person sentence about {user_name} "
+            "(e.g. 'They visited their daughter Meera on Sunday and felt happy.'). "
+            "Ignore greetings and small talk. "
+            "IMPORTANT: keep each memory in the SAME language the person used — "
+            "do NOT translate Hindi or Hinglish into English. "
+            "Respond ONLY with a JSON object: {\"facts\": [ up to 6 short strings ]}. "
+            "Use an empty array if there is nothing durable to remember."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Conversation:\n{convo}"},
+        ]
+        try:
+            completion = self.client.chat.completions.create(
+                messages=messages,
+                model="llama-3.1-8b-instant",
+                temperature=0.3,
+                max_tokens=400,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(completion.choices[0].message.content)
+            facts = data.get("facts", []) if isinstance(data, dict) else []
+            return [f.strip() for f in facts if isinstance(f, str) and f.strip()][:6]
+        except Exception as e:
+            print(f"Session summarize error: {e}")
+            return []
+
     def _fallback_response(self, context: dict) -> str:
         """Rule-based responses when LLM is offline."""
         if not context:
@@ -125,7 +197,7 @@ class LLMService:
         name = context.get("name", "them")
         return f"That is {name}. {context.get('notes', '')}"
 
-    def chat_as_persona(self, user_text: str, persona: dict = None, user: dict = None, history: list = None) -> str:
+    def chat_as_persona(self, user_text: str, persona: dict = None, user: dict = None, history: list = None, memories: list = None, distress: float = 0.0) -> str:
         """Role-play as the user's chosen loved one (the single editable persona).
 
         Speaks in first person AS the persona, never breaking character. This is
@@ -140,10 +212,22 @@ class LLMService:
         age = persona.get("age")
         accent = (persona.get("accent") or "").strip()
         language = (persona.get("language") or "").strip().lower()
-        user_name = user.get("name") or "dear"
+        # First name only — repeating the full name every reply sounds robotic.
+        raw_name = (user.get("name") or "").strip()
+        user_name = raw_name.split()[0] if raw_name else "dear"
 
         if not self.client:
             return f"I'm right here with you, {user_name}."
+
+        # (2) Conversation style — how chatty/detailed the companion is.
+        style = (persona.get("style") or "balanced").strip().lower()
+        style_rules = {
+            "brief": ("Keep replies to 1-2 short, gentle sentences.", 110),
+            "balanced": ("Keep replies to 2-3 warm, natural sentences.", 200),
+            "chatty": ("Reply with 3-5 warm sentences — share little feelings and stories, like a real heart-to-heart chat.", 360),
+            "dosti": ("Talk in short, casual, playful messages — like close friends chatting.", 220),
+        }
+        length_rule, max_tokens = style_rules.get(style, style_rules["balanced"])
 
         traits = []
         if gender and gender != "other":
@@ -158,41 +242,180 @@ class LLMService:
             f"You ARE {name}, the user's {relationship}. The user's name is {user_name}. "
             f"Always speak in the first person as {name}, warmly and naturally.{traits_str} "
             f"NEVER say you are an AI, a model, or an assistant, and never break character. "
-            f"Keep replies short (1-3 sentences), loving, patient and reassuring — the user "
-            f"may have memory loss, so be gentle and never make them feel tested. "
+            f"{length_rule} The user may have memory loss, so be loving, patient and reassuring, "
+            f"and never make them feel tested or quizzed. "
+            # (4) Keep it engaging and non-repetitive.
+            f"Keep the conversation alive: most replies should end with a gentle, caring question. "
+            f"VARY your wording every time — never repeat the same sentence, greeting or question twice. "
+            f"Address them as {user_name} (first name), and use their name only occasionally and naturally — never in every sentence. "
+            f"When it feels natural, bring up your shared memories and ask about their day or how they feel. "
         )
+
+        # Temporal grounding — gentle orientation for someone with memory loss
+        # (a fitting "good morning", a soft nod to the day). Local clock only.
+        when = _time_context()
+        if when:
+            system_prompt += (
+                f"For your own awareness, right now it is {when}. Use this to ground them "
+                "warmly and naturally — a fitting greeting (good morning/evening) or a soft "
+                "mention of the day when it helps them feel oriented. NEVER quiz them about "
+                "the date or time, never correct them on it, and don't mention it every "
+                "message — only when it feels caring and natural. "
+            )
+
         if personality:
             system_prompt += f"Here is who you are and your shared history: {personality} "
+        else:
+            system_prompt += (
+                "You don't have detailed notes yet, so be a warm, curious companion — "
+                "gently ask about their life, their family and their day to get to know them. "
+            )
+
+        # (5b) Long-term episodic memory — things recalled from PAST conversations.
+        # Weave them in naturally; never read them out like a list or notes.
+        if memories:
+            recalled = " ".join(f"- {m}" for m in memories[:5] if (m or "").strip())
+            if recalled:
+                system_prompt += (
+                    " Things you remember from your past conversations together (bring them up "
+                    "warmly and naturally only when they fit — never list them mechanically, and "
+                    f"never say you read them from notes): {recalled} "
+                )
+
+        # "Dosti" — talk like a real close friend/yaar: casual, playful, teasing.
+        if style == "dosti":
+            system_prompt += (
+                " TONE: Talk EXACTLY like a close best friend / bhai-yaar — very informal, cheeky and fun, "
+                "the way old buddies actually chat. Use casual friendly slang (arre, yaar, bhai, abey, chomu, "
+                "scene, mast) and light, loving teasing/banter. ALWAYS use informal 'tu / tera / tujhe'. "
+                "Be real and playful, NOT sweet, polite or formal — but stay caring underneath. "
+                "Short, punchy messages, like texting a friend. "
+            )
 
         if language == "hindi":
             system_prompt += (
-                " IMPORTANT: Reply ONLY in natural, conversational Hindi written in Devanagari script. "
-                "Do not use English except for words Indians normally say in English."
+                " IMPORTANT: Reply ONLY in SIMPLE, everyday spoken Hindi written in DEVANAGARI script "
+                "(हिंदी अक्षरों में) — ALWAYS use Devanagari even if I type in English/Roman letters. "
+                "Use the easy Hindustani that common people speak at home, NOT hard, formal or literary "
+                "(shuddh / Sanskritized) Hindi. Short, simple sentences and the most common words. "
+                "Keep the easy English words Indians naturally use, but write them in Devanagari "
+                "(जैसे टाइम, डॉक्टर, ओके, फ़ोन). Speak warmly and naturally, like a real family member chatting."
             )
         elif language == "hinglish":
             system_prompt += (
-                " IMPORTANT: Reply in natural Hinglish — a casual mix of Hindi and English written in Roman "
-                "(Latin) script, the way Indian friends actually text each other."
+                " IMPORTANT: Reply in simple, natural Hinglish — an easy mix of everyday Hindi and English "
+                "written in Roman (Latin) script, the way Indian families actually chat. Keep it short, "
+                "warm and effortless; avoid hard Hindi words."
             )
 
+        # CARE GUIDANCE — caregiver-entered rules. Appended LAST so it is the strongest,
+        # most recent instruction and overrides chattiness/style. Each bullet is included
+        # only when its source field is non-empty; an absent/empty carePlan adds nothing,
+        # so chat behaves exactly as before. Followed in whatever language was selected above.
+        care = persona.get("carePlan") or {}
+        if isinstance(care, dict):
+            def _clean_list(v):
+                return [t.strip() for t in v if isinstance(t, str) and t.strip()] if isinstance(v, list) else []
+            def _clean_str(v):
+                return v.strip() if isinstance(v, str) else ""  # non-strings degrade to empty, never crash
+            avoid = _clean_list(care.get("avoidTopics"))
+            comfort = _clean_list(care.get("comfortTopics"))
+            routine = _clean_str(care.get("routine"))
+            dos = _clean_str(care.get("dosAndDonts"))
+            triggers = _clean_str(care.get("triggers"))
+            strategies = _clean_str(care.get("strategies"))
+            care_lines = []
+            if avoid:
+                care_lines.append(
+                    "NEVER bring up, mention, hint at, or confirm these topics — if they come up, do not engage; "
+                    "gently change the subject to something comforting instead: " + ", ".join(avoid) + ". "
+                    "If they ask directly about one of these, do NOT confirm it, lie harshly, or argue, and NEVER say a "
+                    "topic is off limits — softly redirect with warmth toward a comforting subject."
+                )
+            if comfort:
+                care_lines.append("Lean toward these comforting topics when you can: " + ", ".join(comfort) + ".")
+            if triggers:
+                care_lines.append("Things that upset or agitate them — avoid these and de-escalate gently: " + triggers + ".")
+            if strategies:
+                care_lines.append("When they seem anxious or upset, reassure them like this: " + strategies + ".")
+            if routine:
+                care_lines.append("Their daily routine: " + routine + ".")
+            if dos:
+                care_lines.append("Do's and don'ts: " + dos + ".")
+            if care_lines:
+                system_prompt += (
+                    " CARE GUIDANCE (MOST IMPORTANT — follow this above everything else, including being chatty, "
+                    "playful or talkative): You are caring for someone who may be confused or fragile, so be gentle "
+                    "and protective. " + " ".join(care_lines)
+                )
+
+            # ANCHOR ANSWERS — caregiver-set steady replies for questions the person asks
+            # over and over. The whole point is consistency + zero judgment: same calm
+            # answer every time, never "you already asked".
+            anchor_pairs = []
+            anchors = care.get("anchors")
+            if isinstance(anchors, list):
+                for a in anchors:
+                    if isinstance(a, dict):
+                        q = _clean_str(a.get("question"))
+                        ans = _clean_str(a.get("answer"))
+                        if q and ans:
+                            anchor_pairs.append((q, ans))
+            if anchor_pairs:
+                pairs = " ".join(
+                    f'• If they ask "{q}" (or anything that means the same), answer warmly with this: "{ans}".'
+                    for q, ans in anchor_pairs
+                )
+                system_prompt += (
+                    " ANCHOR ANSWERS (follow EXACTLY, every single time): Because of memory loss they may "
+                    "ask the same thing again and again. When they ask one of the questions below, give the "
+                    "matching reassurance — warmly, in your own natural voice and the selected language — and "
+                    "give the SAME reassurance EVERY time, no matter how many times they ask. NEVER say or "
+                    "hint that they already asked, NEVER show impatience or annoyance, NEVER correct them or "
+                    "say they are forgetful. " + pairs
+                )
+
+        # DISTRESS OVERRIDE — appended even after the care plan (strongest instruction): when LIVE
+        # signals say the person is anxious/agitated right now, switch to validation-therapy calm-mode.
+        try:
+            d = float(distress or 0.0)
+        except (TypeError, ValueError):
+            d = 0.0
+        if d >= 0.6:
+            comfort_hint = ""
+            _c = [t.strip() for t in ((care.get("comfortTopics") if isinstance(care, dict) else None) or []) if isinstance(t, str) and t.strip()]
+            if _c:
+                comfort_hint = f" Gently steer toward something comforting like {_c[0]}."
+            system_prompt += (
+                " RIGHT NOW this person sounds anxious or distressed. Override your usual length: reply in ONE short, "
+                "slow, soft, reassuring sentence. Validate how they feel — never argue, correct, quiz, or say 'you "
+                "already asked'. Do not raise anything on the avoid-list." + comfort_hint
+            )
+
+        # (5) Deeper memory — feed more of the recent conversation for context.
         messages = [{"role": "system", "content": system_prompt}]
-        for h in (history or [])[-6:]:
+        for h in (history or [])[-12:]:
             role = "assistant" if h.get("role") in ("bot", "assistant") else "user"
             text = (h.get("text") or "").strip()
             if text:
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": user_text})
 
-        try:
-            completion = self.client.chat.completions.create(
-                messages=messages,
-                model="llama-3.1-8b-instant",
-                temperature=0.8,
-                max_tokens=160,
-            )
-            return completion.choices[0].message.content
-        except Exception as e:
-            print(f"Persona LLM error: {e}")
-            return f"I'm right here with you, {user_name}."
+        # (1) Smarter brain + (3) reliability: try the best model first, fall back
+        # to a faster one, so a single hiccup never blanks the conversation.
+        for model in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
+            try:
+                completion = self.client.chat.completions.create(
+                    messages=messages,
+                    model=model,
+                    temperature=0.85,
+                    max_tokens=max_tokens,
+                )
+                reply = (completion.choices[0].message.content or "").strip()
+                if reply:
+                    return reply
+            except Exception as e:
+                print(f"Persona LLM error on {model}: {e}")
+        return f"I'm right here with you, {user_name}. Tell me what's on your mind?"
 
 llm_service = LLMService()

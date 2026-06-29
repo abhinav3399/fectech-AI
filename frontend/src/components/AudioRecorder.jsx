@@ -73,38 +73,56 @@ export default function AudioRecorder({ onRecordingComplete }) {
 
             <style>{`
                 .audio-recorder {
-                    margin-bottom: 15px;
+                    margin-bottom: var(--s-4);
                 }
                 .rec-btn {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
-                    padding: 8px 16px;
-                    border-radius: 20px;
-                    border: none;
-                    font-weight: 600;
+                    gap: var(--s-2);
+                    padding: var(--s-3) var(--s-4);
+                    border-radius: var(--r-pill);
+                    border: 1px solid transparent;
+                    font-weight: 700;
+                    font-size: var(--fs-sm);
+                    font-family: inherit;
                     cursor: pointer;
                     width: 100%;
                     justify-content: center;
+                    transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
                 }
+                .rec-btn:active { transform: translateY(1px); }
                 .start {
-                    background: #3b82f6;
-                    color: white;
+                    background: var(--grad-brand);
+                    color: var(--text-on-brand);
+                    box-shadow: var(--glow-brand);
                 }
+                .start:hover { transform: translateY(-2px); box-shadow: 0 14px 44px rgba(124, 58, 237, 0.5); }
                 .stop {
-                    background: #ef4444;
-                    color: white;
+                    background: linear-gradient(135deg, #f43f5e, #e11d48);
+                    color: #fff;
+                    box-shadow: 0 10px 30px rgba(244, 63, 94, 0.4);
                     animation: pulse 1s infinite;
                 }
                 .reset {
-                    background: #64748b;
-                    color: white;
-                    margin-top: 5px;
+                    background: var(--surface-2);
+                    border-color: var(--border);
+                    color: var(--text);
+                    margin-top: var(--s-2);
+                }
+                .reset:hover { background: var(--surface-3); }
+                .audio-preview {
+                    background: var(--glass);
+                    border: 1px solid var(--border);
+                    border-radius: var(--r-md);
+                    padding: var(--s-3);
+                    backdrop-filter: blur(12px);
                 }
                 .audio-player {
                     width: 100%;
-                    height: 32px;
-                    margin-bottom: 5px;
+                    min-width: 0;
+                    max-width: 100%;
+                    height: 36px;
+                    margin-bottom: var(--s-2);
                 }
                 @keyframes pulse {
                     0% { opacity: 1; }

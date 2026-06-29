@@ -1,0 +1,22 @@
+# Local image->3D service. Core deps:
+fastapi
+uvicorn[standard]
+pillow
+numpy
+trimesh
+scipy
+opencv-python
+# Pipeline C (default) — real 3D FACE MESH on CPU, no GPU, no external platform.
+# Also downloads model_service/models/face_landmarker.task (~3.7MB) on first use:
+#   https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+mediapipe
+
+# --- Optional, better quality (install as needed) ---
+# rembg                 # background removal in preprocessing (pulls onnxruntime)
+# torch                 # required by the real depth model below
+# transformers          # Depth Anything V2 (real monocular depth) -> better relief
+# Pipeline A (AI mesh, needs an NVIDIA GPU): install TripoSR or InstantMesh + CUDA torch
+#   TripoSR:    https://github.com/VAST-AI-Research/TripoSR   (MIT)
+#   InstantMesh: https://github.com/TencentARC/InstantMesh    (Apache-2.0)
+# Blender (optional, higher-quality export): install Blender 3.x/4.x and set BLENDER_PATH,
+#   or `pip install bpy` to use it as a module.

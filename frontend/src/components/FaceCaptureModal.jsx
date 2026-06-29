@@ -85,21 +85,26 @@ export default function FaceCaptureModal({ onCapture, onClose }) {
             </div>
 
             <style>{`
-        .fc { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
-        .fc-card { width: 100%; max-width: 460px; background: #1e293b; border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 22px; }
-        .fc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-        .fc-head h3 { margin: 0; color: #fff; font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
-        .fc-head button { background: rgba(255,255,255,0.08); border: none; color: #cbd5e1; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; }
-        .fc-stage { position: relative; width: 100%; aspect-ratio: 4/3; background: #0f172a; border-radius: 14px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .fc { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); z-index: 200; display: flex; align-items: center; justify-content: center; padding: var(--s-5); }
+        .fc-card { width: 100%; max-width: 460px; background: var(--glass-strong); border: 1px solid var(--border-strong); border-radius: var(--r-xl); padding: var(--s-6); box-shadow: var(--shadow-lg), var(--glow-brand); backdrop-filter: blur(16px); animation: ui-fade-up 0.4s var(--ease) both; }
+        .fc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-4); }
+        .fc-head h3 { margin: 0; color: var(--text); font-size: var(--fs-lg); font-weight: 800; letter-spacing: -0.01em; display: flex; align-items: center; gap: var(--s-2); }
+        .fc-head h3 > svg { color: var(--brand-1); }
+        .fc-head button { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); width: 34px; height: 34px; border-radius: var(--r-sm); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+        .fc-head button:hover { background: var(--surface-3); color: var(--text); }
+        .fc-stage { position: relative; width: 100%; aspect-ratio: 4/3; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; display: flex; align-items: center; justify-content: center; }
         .fc-media { width: 100%; height: 100%; object-fit: cover; display: block; }
         .fc-media.mirror { transform: scaleX(-1); }
-        .fc-loading { position: absolute; color: #94a3b8; font-size: 0.9rem; }
-        .fc-error { color: #fca5a5; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding: 16px; border-radius: 12px; font-size: 0.92rem; line-height: 1.5; }
-        .fc-actions { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
-        .fc-btn { display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 10px; border: none; font-weight: 700; cursor: pointer; }
-        .fc-btn.primary { background: linear-gradient(135deg,#7c3aed,#2563eb); color: #fff; }
-        .fc-btn.primary:disabled { opacity: 0.5; cursor: default; }
-        .fc-btn.ghost { background: rgba(255,255,255,0.08); color: #cbd5e1; }
+        .fc-loading { position: absolute; color: var(--text-muted); font-size: var(--fs-sm); }
+        .fc-error { color: var(--danger); background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3); padding: var(--s-4); border-radius: var(--r-md); font-size: var(--fs-sm); line-height: 1.5; }
+        .fc-actions { display: flex; justify-content: center; gap: var(--s-3); margin-top: var(--s-4); }
+        .fc-btn { display: flex; align-items: center; gap: var(--s-2); padding: 11px 20px; border-radius: var(--r-md); border: 1px solid transparent; font-weight: 700; font-size: var(--fs-sm); font-family: inherit; cursor: pointer; transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease); }
+        .fc-btn:active { transform: translateY(1px); }
+        .fc-btn.primary { background: var(--grad-brand); color: var(--text-on-brand); box-shadow: var(--glow-brand); }
+        .fc-btn.primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 14px 44px rgba(124, 58, 237, 0.5); }
+        .fc-btn.primary:disabled { opacity: 0.5; cursor: default; transform: none; }
+        .fc-btn.ghost { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+        .fc-btn.ghost:hover { background: var(--surface-3); }
       `}</style>
         </div>
     );

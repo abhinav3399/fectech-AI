@@ -53,9 +53,15 @@ class TTSService:
                 except:
                     pass
 
-    async def synthesize(self, text: str, voice: str = None) -> str:
+    async def synthesize(self, text: str, voice: str = None, rate: str = None, pitch: str = None) -> str:
         """Generate neural TTS and return base64-encoded MP3 for the browser
-        to play (no server-side audio device needed).
+        to play (no server-side audio device needed). This is the FAST path
+        (~1-2s) vs the slow cloned voice.
+
+        `rate` (e.g. "-8%") slows the delivery slightly for a calmer, clearer,
+        more natural speaking flow — gentler for elderly listeners.
+        `pitch` (e.g. "-15Hz" / "+10Hz") nudges the neural voice up/down so a
+        fast preset can be tuned to better resemble the loved one's voice.
 
         edge-tts intermittently returns "No audio was received", so retry a few
         times before giving up.
@@ -69,7 +75,12 @@ class TTSService:
         for attempt in range(3):
             tmp = os.path.join(tempfile.gettempdir(), f"tts_{int(time.time() * 1000)}_{attempt}.mp3")
             try:
-                communicate = edge_tts.Communicate(text, voice)
+                kwargs = {}
+                if rate:
+                    kwargs["rate"] = rate
+                if pitch:
+                    kwargs["pitch"] = pitch
+                communicate = edge_tts.Communicate(text, voice, **kwargs)
                 await communicate.save(tmp)
                 if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
                     with open(tmp, "rb") as f:
