@@ -1,0 +1,2 @@
+# Development-only dependencies (testing, etc.)
+pytest>=8.0

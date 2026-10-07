@@ -1,13 +1,113 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { ArrowRight, Check, Camera, Mic, UploadCloud } from 'lucide-react';
+import { ArrowRight, Check, Camera, Mic, UploadCloud, Activity, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import AudioRecorder from '../components/AudioRecorder';
+import { API_BASE } from '../lib/apiConfig';
 
 /*
   Caregiver Dashboard - Typeform Style
 */
 
-const API_BASE = import.meta.env.VITE_API_URL || "/api/v1";
+const COMMON_SYMPTOMS = [
+    'Headache', 'Fever', 'Fatigue', 'Cough', 'Shortness of breath',
+    'Chest pain', 'Dizziness', 'Nausea', 'Joint pain', 'Back pain',
+    'Loss of appetite', 'Confusion', 'Difficulty sleeping', 'Anxiety',
+];
+
+function SymptomChecker() {
+    const [open, setOpen]               = useState(false);
+    const [age, setAge]                 = useState(65);
+    const [sex, setSex]                 = useState('female');
+    const [selected, setSelected]       = useState([]);
+    const [result, setResult]           = useState(null);
+    const [checking, setChecking]       = useState(false);
+    const [error, setError]             = useState(null);
+
+    const toggle = (sym) => setSelected(prev =>
+        prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]
+    );
+
+    const check = async () => {
+        if (selected.length === 0) { setError('Please select at least one symptom.'); return; }
+        setChecking(true); setError(null); setResult(null);
+        try {
+            const res = await fetch(`${API_BASE}/health-apis/symptoms`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ age, sex, symptoms: selected }),
+            });
+            const data = await res.json();
+            setResult(data);
+        } catch(e) {
+            setError('Could not reach symptom checker. Is the backend running?');
+        } finally {
+            setChecking(false);
+        }
+    };
+
+    return (
+        <div className="sc-card">
+            <button className="sc-header" onClick={() => setOpen(o => !o)}>
+                <span className="sc-header-left"><Activity size={18} />🩺 AI Symptom Checker</span>
+                {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+
+            {open && (
+                <div className="sc-body">
+                    <p className="sc-desc">Select symptoms the person is experiencing to get an AI assessment. This is for awareness only — always consult a doctor.</p>
+
+                    <div className="sc-meta">
+                        <label className="sc-label">Age
+                            <input type="number" value={age} onChange={e => setAge(+e.target.value)} className="sc-input-sm" min={1} max={120} />
+                        </label>
+                        <label className="sc-label">Sex
+                            <select value={sex} onChange={e => setSex(e.target.value)} className="sc-input-sm">
+                                <option value="female">Female</option>
+                                <option value="male">Male</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div className="sc-chips">
+                        {COMMON_SYMPTOMS.map(sym => (
+                            <button
+                                key={sym}
+                                className={`sc-chip ${selected.includes(sym) ? 'active' : ''}`}
+                                onClick={() => toggle(sym)}
+                            >{sym}</button>
+                        ))}
+                    </div>
+
+                    {error && <p className="sc-err">⚠ {error}</p>}
+
+                    <button className="sc-check-btn" onClick={check} disabled={checking}>
+                        {checking ? 'Analysing…' : '🔍 Check Symptoms'}
+                    </button>
+
+                    {result && (
+                        <div className="sc-result">
+                            {result.demo && <p className="sc-demo-note">⚠ Demo mode — add Infermedica API keys for real AI analysis.</p>}
+                            <div className="sc-result-title">Possible conditions:</div>
+                            {result.conditions.map((c, i) => (
+                                <div key={i} className="sc-condition">
+                                    <div className="sc-cond-name">{c.common_name || c.name}</div>
+                                    <div className="sc-cond-bar">
+                                        <div className="sc-cond-fill" style={{ width: `${Math.round(c.probability * 100)}%` }} />
+                                    </div>
+                                    <div className="sc-cond-prob">{Math.round(c.probability * 100)}%</div>
+                                </div>
+                            ))}
+                            {result.conditions.length === 0 && <p className="sc-no-result">No conditions found. Try different symptoms.</p>}
+                            <p className="sc-src">Source: {result.source} · Not medical advice.</p>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+
 
 const CaregiverDashboard = () => {
     const [step, setStep] = useState(0);
@@ -162,7 +262,9 @@ const CaregiverDashboard = () => {
     }
 
     return (
-        <div className="tf-container">
+        <div style={{height:'100%',overflowY:'auto',padding:'0'}}>
+            <SymptomChecker />
+            <div className="tf-container">
             {/* Progress Bar */}
             <div className="progress-bar" style={{ width: `${(step + 1) * 25}%` }}></div>
 
@@ -271,7 +373,39 @@ const CaregiverDashboard = () => {
         .success-screen h1 { font-size: 4rem; margin-bottom: 20px; color: #10b981; }
         
         .voice-opt { margin-bottom: 30px; display: flex; align-items: center; }
+
+        /* Symptom Checker */
+        .sc-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 20px; margin: 16px; overflow: hidden; }
+        .sc-header { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: transparent; border: none; cursor: pointer; font-family: inherit; }
+        .sc-header-left { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 1rem; color: var(--text); }
+        .sc-body { padding: 0 20px 20px; }
+        .sc-desc { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 14px; line-height: 1.5; }
+        .sc-meta { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+        .sc-label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text); }
+        .sc-input-sm { background: var(--glass-strong); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; color: var(--text); font-family: inherit; font-size: 0.85rem; width: 80px; }
+        .sc-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+        .sc-chip { background: var(--glass); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; font-size: 0.82rem; font-weight: 600; cursor: pointer; color: var(--text-muted); font-family: inherit; transition: all 0.2s; }
+        .sc-chip.active { background: rgba(124,58,237,0.15); border-color: rgba(124,58,237,0.4); color: #7c3aed; }
+        .sc-err { color: #f87171; font-size: 0.85rem; margin: 0 0 10px; }
+        .sc-check-btn { background: linear-gradient(135deg,#7c3aed,#4f46e5); color: #fff; border: none; border-radius: 12px; padding: 12px 24px; font-weight: 700; font-size: 0.95rem; cursor: pointer; font-family: inherit; }
+        .sc-check-btn:disabled { opacity: 0.6; cursor: default; }
+        .sc-result { margin-top: 16px; }
+        .sc-result-title { font-weight: 800; font-size: 0.9rem; margin-bottom: 10px; color: var(--text); }
+        .sc-condition { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .sc-cond-name { flex: 0 0 140px; font-size: 0.85rem; font-weight: 600; color: var(--text); }
+        .sc-cond-bar { flex: 1; height: 8px; background: var(--surface-1); border-radius: 999px; overflow: hidden; }
+        .sc-cond-fill { height: 100%; background: linear-gradient(90deg,#7c3aed,#4f46e5); border-radius: 999px; transition: width 0.5s ease; }
+        .sc-cond-prob { font-size: 0.82rem; font-weight: 700; color: #7c3aed; min-width: 36px; text-align: right; }
+        .sc-demo-note { font-size: 0.8rem; color: #f59e0b; margin-bottom: 10px; }
+        .sc-no-result { font-size: 0.85rem; color: var(--text-muted); }
+        .sc-src { font-size: 0.72rem; color: var(--text-dim); margin-top: 10px; text-align: right; }
+        @media (max-width: 640px) {
+            .sc-card { margin: 12px; }
+            .sc-header-left { color: #0f0c2e; font-size: 0.95rem; }
+            .sc-chip.active { background: rgba(124,58,237,0.1); }
+        }
       `}</style>
+        </div>
         </div>
     );
 };

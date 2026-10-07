@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Camera, X, RotateCcw, ScanFace, UserPlus } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
+import { API_BASE } from '../lib/apiConfig';
 
 const dataUrlToBlob = (dataUrl) => {
     const [meta, b64] = dataUrl.split(',');

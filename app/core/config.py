@@ -13,12 +13,17 @@ class Settings(BaseSettings):
     QDRANT_PATH: str = "qdrant_storage"
     
     GROQ_API_KEY: Optional[str] = None
+    # Optional free local LLM. Ollama serves models on this URL without an API key.
+    OLLAMA_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    OLLAMA_ENABLED: bool = True
     MESHY_API_KEY: Optional[str] = None
     ELEVENLABS_API_KEY: Optional[str] = None
 
     # CORS allowlist (comma-separated). Dev only needs the Vite origin; in single-origin
     # production the SPA is same-origin so this rarely matters. NEVER use "*" with credentials.
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8010"
+    # Capacitor Android apps use capacitor://localhost as their origin.
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8010,capacitor://localhost,http://localhost"
 
     # --- Accounts & persistence (SQLite by default; swap to Postgres for scale) ---
     DATABASE_URL: str = "sqlite:///./factech.db"

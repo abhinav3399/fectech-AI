@@ -69,6 +69,8 @@
     /* Motion ------------------------------------------------------------- */
     --ease: cubic-bezier(0.22, 1, 0.36, 1);
     --dur: 0.22s;
+    --dur-slow: 0.6s;
+    --dur-liquid: 15s;
 
     font-family: 'Plus Jakarta Sans', system-ui, Avenir, Helvetica, Arial, sans-serif;
     line-height: 1.6;
@@ -246,3 +248,253 @@ h1, h2, h3, h4 { line-height: 1.15; letter-spacing: -0.01em; margin: 0; }
     --ring: rgba(109, 40, 217, 0.85);
 }
 :root[data-contrast="high"] :focus-visible { outline-width: 3px; }
+
+/* =========================================================================
+   Android / Mobile Specific Styles
+   ========================================================================= */
+
+/* Safe area support for notched/punched-hole phones */
+:root {
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+}
+
+/* Remove blue flash on tap for Android WebView */
+* {
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Smooth scrolling and prevent rubber-band overscroll */
+html, body {
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+html, body, #root { width: 100%; min-width: 0; min-height: 100%; }
+#root { height: 100dvh; overflow: hidden; }
+.native-app-shell .app-content { padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+.app-shell { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; overflow: hidden; }
+.app-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    padding-top: calc(68px + var(--safe-area-top));
+    padding-bottom: 0;
+    overflow: hidden;
+}
+
+/* Ensure the top nav accounts for the status bar (safe area) */
+.topnav {
+    padding-top: calc(var(--safe-area-top) + 0px);
+    height: calc(68px + var(--safe-area-top));
+}
+
+/* Bottom navigation bar for Android — visible only on small screens */
+.bottom-nav {
+    display: none;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: calc(62px + var(--safe-area-bottom));
+    padding-bottom: var(--safe-area-bottom);
+    background: var(--glass-strong);
+    backdrop-filter: blur(18px);
+    border-top: 1px solid var(--border);
+    z-index: 1000;
+    align-items: center;
+    justify-content: space-around;
+}
+.bottom-nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex: 1;
+    min-height: 62px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: color var(--dur) var(--ease);
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+.bottom-nav-btn.active {
+    color: var(--brand-1);
+}
+.bottom-nav-btn svg { flex-shrink: 0; }
+
+@media (max-width: 640px) {
+    .app-content {
+        padding-top: calc(68px + var(--safe-area-top));
+        padding-bottom: calc(62px + var(--safe-area-bottom));
+    }
+    .bottom-nav { display: flex; }
+    .topnav { padding-left: max(var(--s-4), var(--safe-area-left)); padding-right: max(var(--s-4), var(--safe-area-right)); }
+    .nav-links { display: none; }
+    .nav-right { gap: var(--s-2); }
+    .nav-brand { min-width: 0; }
+    .brand-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.05rem; }
+}
+
+@media (min-width: 641px) {
+    .app-content { padding-top: calc(68px + var(--safe-area-top)); }
+}
+
+@media (max-width: 360px) {
+    .bottom-nav-btn { font-size: 9px; }
+    .bottom-nav-btn svg { width: 20px; height: 20px; }
+}
+
+/* Offline / network error banner */
+.offline-banner {
+    position: fixed;
+    top: calc(68px + var(--safe-area-top)); left: 0; right: 0;
+    z-index: 9999;
+    background: #dc2626;
+    color: #fff;
+    text-align: center;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: inherit;
+    letter-spacing: 0.01em;
+}
+
+/* On small screens: touch targets */
+@media (max-width: 640px) {
+    button, [role="button"], input, select, textarea { min-height: 44px; }
+    .offline-banner { font-size: 12px; padding: 6px 12px; }
+
+    /* ── Global mobile light theme ─────────────────────── */
+    body, html {
+        background: linear-gradient(150deg, #eef1ff 0%, #f3efff 60%, #fce7ff 100%) !important;
+        background-attachment: fixed !important;
+        color: #0f0c2e;
+    }
+
+    /* Override CSS variable tokens for light mobile theme */
+    :root {
+        --text: #0f0c2e;
+        --text-muted: #64748b;
+        --text-dim: #94a3b8;
+        --surface-1: rgba(255,255,255,0.6);
+        --surface-2: rgba(255,255,255,0.85);
+        --surface-3: #ffffff;
+        --glass: rgba(255,255,255,0.72);
+        --glass-strong: rgba(255,255,255,0.95);
+        --border: rgba(124,58,237,0.1);
+        --border-strong: rgba(124,58,237,0.2);
+        --shadow-sm: 0 2px 8px rgba(100,80,200,0.07);
+        --shadow-md: 0 4px 20px rgba(100,80,200,0.1);
+        --shadow-lg: 0 8px 40px rgba(100,80,200,0.14);
+    }
+
+    /* ── Memories page mobile ──────────────────────────── */
+    .mem { background: transparent !important; }
+    .mem-inner { padding: 20px 16px 24px !important; }
+    .mem-head h1 {
+        font-size: 2.1rem !important; font-weight: 900 !important;
+        background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+        -webkit-background-clip: text !important; background-clip: text !important;
+        -webkit-text-fill-color: transparent !important; color: transparent !important;
+    }
+    .mem-head p { color: #64748b !important; }
+    .mem-add-btn {
+        background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+        color: #fff !important; border: none !important;
+        border-radius: 14px !important; min-height: 50px !important;
+        font-size: 0.95rem !important; font-weight: 700 !important;
+        box-shadow: 0 4px 16px rgba(124,58,237,0.3) !important;
+    }
+    .mem-filter-bar { background: rgba(255,255,255,0.7) !important; border: 1px solid rgba(124,58,237,0.12) !important; }
+    .mem-filter-btn { color: #64748b !important; background: transparent !important; }
+    .mem-filter-btn.active { background: linear-gradient(135deg, #7c3aed, #4f46e5) !important; color: #fff !important; }
+    .mem-group-label { color: #0f0c2e !important; font-weight: 700 !important; }
+    .mem-card { background: #fff !important; border: 1px solid rgba(124,58,237,0.08) !important; box-shadow: 0 2px 12px rgba(100,80,200,0.07) !important; }
+    .mem-card-caption { color: #0f0c2e !important; }
+    .mem-card-date { color: #94a3b8 !important; }
+
+    /* ── Reminders page mobile ─────────────────────────── */
+    .rp { background: transparent !important; }
+    .rp-inner { padding: 20px 16px 24px !important; }
+    .rp-head h1 {
+        font-size: 2.0rem !important; font-weight: 900 !important;
+        background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+        -webkit-background-clip: text !important; background-clip: text !important;
+        -webkit-text-fill-color: transparent !important; color: transparent !important;
+    }
+    .rp-head p { color: #64748b !important; }
+    .rp-form, .rp-active-section {
+        background: #fff !important;
+        border: 1px solid rgba(124,58,237,0.08) !important;
+        border-radius: 20px !important;
+        box-shadow: 0 2px 12px rgba(100,80,200,0.07) !important;
+    }
+    .rp-form-title { color: #0f0c2e !important; font-weight: 700 !important; font-size: 1rem !important; }
+    .rp-cat-label, .rp-field-label { color: #475569 !important; font-size: 0.75rem !important; font-weight: 700 !important; letter-spacing: 0.05em !important; }
+    .rp-cat-btn { border: 1.5px solid rgba(124,58,237,0.15) !important; background: #f8f5ff !important; color: #475569 !important; border-radius: 12px !important; }
+    .rp-cat-btn.active { background: linear-gradient(135deg, #7c3aed, #4f46e5) !important; color: #fff !important; border-color: transparent !important; }
+    .rp-input { background: #f8f5ff !important; border: 1.5px solid rgba(124,58,237,0.12) !important; color: #0f0c2e !important; border-radius: 12px !important; }
+    .rp-input::placeholder { color: #94a3b8 !important; }
+    .rp-add-btn {
+        background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+        border: none !important; color: #fff !important;
+        border-radius: 14px !important; font-weight: 700 !important;
+        box-shadow: 0 4px 16px rgba(124,58,237,0.3) !important;
+    }
+    .rp-reminder-card { background: #fff !important; border: 1px solid rgba(124,58,237,0.08) !important; box-shadow: 0 2px 8px rgba(100,80,200,0.06) !important; }
+    .rp-reminder-name { color: #0f0c2e !important; }
+    .rp-reminder-meta { color: #64748b !important; }
+
+    /* ── Contacts page mobile ──────────────────────────── */
+    .cp { background: transparent !important; }
+    .cp-inner { padding: 20px 16px 24px !important; }
+    .cp-head h1 {
+        font-size: 2.0rem !important; font-weight: 900 !important;
+        background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+        -webkit-background-clip: text !important; background-clip: text !important;
+        -webkit-text-fill-color: transparent !important; color: transparent !important;
+    }
+    .cp-head p { color: #64748b !important; }
+    .cp-add {
+        background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+        color: #fff !important; border: none !important;
+        border-radius: 14px !important; font-weight: 700 !important;
+        box-shadow: 0 4px 16px rgba(124,58,237,0.3) !important;
+    }
+    .cp-search { background: rgba(255,255,255,0.9) !important; border: 1.5px solid rgba(124,58,237,0.12) !important; border-radius: 14px !important; color: #0f0c2e !important; }
+    .cp-grid-label { color: #0f0c2e !important; font-weight: 700 !important; font-size: 1rem !important; }
+    .cp-count { background: #7c3aed !important; color: #fff !important; border-radius: 999px !important; padding: 2px 10px !important; font-size: 0.8rem !important; font-weight: 700 !important; }
+    .cp-card {
+        background: #fff !important;
+        border: 1.5px solid rgba(124,58,237,0.08) !important;
+        border-radius: 18px !important;
+        box-shadow: 0 2px 12px rgba(100,80,200,0.07) !important;
+        margin-bottom: 10px !important;
+    }
+    .cp-card.primary { border-color: rgba(124,58,237,0.22) !important; }
+    .cp-name { color: #0f0c2e !important; font-weight: 700 !important; }
+    .cp-rel, .cp-num { color: #64748b !important; font-size: 0.82rem !important; }
+    .cp-badge { background: #fef3c7 !important; color: #d97706 !important; border-radius: 999px !important; font-size: 0.75rem !important; padding: 2px 8px !important; font-weight: 700 !important; display: inline-flex !important; align-items: center !important; gap: 3px !important; }
+    .cp-call {
+        background: #22c55e !important; color: #fff !important;
+        border-radius: 50% !important; width: 40px !important; height: 40px !important;
+        min-height: 40px !important; display: flex !important; align-items: center !important;
+        justify-content: center !important; text-decoration: none !important;
+        box-shadow: 0 4px 12px rgba(34,197,94,0.35) !important;
+    }
+
+    /* ── Avatar page mobile layout ────────────────────── */
+    .ap { background: transparent !important; }
+
+    /* EmergencyButton (red phone FAB) */
+    .emg-btn {
+        bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}

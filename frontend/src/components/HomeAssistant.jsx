@@ -1,9 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Send, Sparkles, Volume2, VolumeX } from 'lucide-react';
-
-// Relative by default -> same origin as the served page (single-origin).
-const API_BASE = import.meta.env.VITE_API_BASE || "/api/v1";
+import { API_BASE } from '../lib/apiConfig';
 
 const SUGGESTIONS = [
     "What can you do?",

@@ -19,6 +19,8 @@ ultralytics
 opencv-python-headless
 keras_facenet
 tf-keras
+apscheduler==3.10.4         # Background task scheduling for family updates
+
 
 
 

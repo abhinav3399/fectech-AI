@@ -19,7 +19,7 @@ def set_progress(tid: str, p: int):
             _JOBS[tid]["progress"] = int(p)
 
 
-def complete(tid: str, glb_url: str, stl_url: str):
+def complete(tid: str, glb_url: str, stl_url: str = None):
     with _lock:
         _JOBS[tid] = {"status": "SUCCEEDED", "progress": 100,
                       "model_urls": {"glb": glb_url, "stl": stl_url}}

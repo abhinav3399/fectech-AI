@@ -95,7 +95,7 @@ export default function EmergencyButton() {
             )}
 
             <style>{`
-        .eb-fab { position: fixed; left: 22px; bottom: 22px; z-index: 3500;
+        .eb-fab { position: fixed; left: max(22px, var(--safe-area-left)); bottom: calc(22px + var(--safe-area-bottom)); z-index: 900;
             display: inline-flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 22px;
             border-radius: var(--r-pill); border: 1px solid rgba(255,255,255,0.22);
             background: linear-gradient(135deg, #f43f5e, #e11d48); color: #fff; font-weight: 800; font-size: var(--fs-md);
@@ -103,7 +103,7 @@ export default function EmergencyButton() {
             transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
         .eb-fab:hover { transform: translateY(-2px); box-shadow: 0 18px 50px rgba(225,29,72,0.55); }
         .eb-fab:active { transform: translateY(1px); }
-        @media (max-width: 520px) { .eb-fab span { display: none; } .eb-fab { padding: 0; width: 56px; justify-content: center; } }
+        @media (max-width: 640px) { .eb-fab span { display: none; } .eb-fab { left: max(16px, var(--safe-area-left)); bottom: calc(78px + var(--safe-area-bottom)); padding: 0; width: 52px; min-height: 52px; justify-content: center; } }
 
         .eb-modal { position: fixed; inset: 0; z-index: 3600; background: rgba(5,8,16,0.7); backdrop-filter: blur(8px);
             display: flex; align-items: center; justify-content: center; padding: var(--s-5); }

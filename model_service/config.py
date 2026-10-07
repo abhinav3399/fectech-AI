@@ -15,6 +15,11 @@ class Cfg:
     # "B" = depth-relief (CPU-capable, no AI mesh model).
     # "A" = AI mesh model (TripoSR/InstantMesh) — needs an NVIDIA GPU (scaffolded).
     PIPELINE = os.getenv("MODEL_3D_PIPELINE", "C").upper()  # C=clean face mesh (default), B=head relief, A=GPU
+    DECA_ROOT = os.getenv("DECA_ROOT", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vendor", "DECA")))
+    DECA_PYTHON = os.getenv("DECA_PYTHON", "")
+    DECA_DEVICE = os.getenv("DECA_DEVICE", "cpu")
+    DECA_RASTERIZER = os.getenv("DECA_RASTERIZER", "pytorch3d")
+    DECA_TIMEOUT = int(os.getenv("DECA_TIMEOUT", "900"))
     FACE_SIZE_MM = float(os.getenv("FACE_SIZE_MM", "110"))   # face mesh width
     FACE_Z_SCALE = float(os.getenv("FACE_Z_SCALE", "0.85"))  # depth exaggeration (1=proportional)
 

@@ -160,19 +160,22 @@ class LocalProvider:
             r = await client.get(f"{self.base}/status/{task_id}")
             r.raise_for_status()
             t = r.json()
-        raw = str(t.get("status") or "")
+        raw = str(t.get("status") or "").strip().upper()
         norm = {
-            "SUCCEEDED": SUCCEEDED, "succeeded": SUCCEEDED, "success": SUCCEEDED,
-            "done": SUCCEEDED, "completed": SUCCEEDED,
-            "FAILED": FAILED, "failed": FAILED, "error": FAILED,
-            "CANCELED": CANCELED, "canceled": CANCELED, "cancelled": CANCELED,
+            "SUCCEEDED": SUCCEEDED, "SUCCESS": SUCCEEDED, "DONE": SUCCEEDED,
+            "COMPLETED": SUCCEEDED,
+            "FAILED": FAILED, "ERROR": FAILED,
+            "CANCELED": CANCELED, "CANCELLED": CANCELED,
         }.get(raw, IN_PROGRESS)
         urls = t.get("model_urls") or {}
+        error = t.get("task_error") or t.get("error")
+        if isinstance(error, str):
+            error = _err(error)
         return {
             "status": norm,
-            "progress": t.get("progress", 0),
+            "progress": max(0, min(100, int(t.get("progress", 0) or 0))),
             "model_urls": {"glb": urls.get("glb"), "stl": urls.get("stl")},
-            "task_error": _err(t.get("error")),
+            "task_error": error,
         }
 
 

@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 frontend/.env
+frontend/.env.android
 # keep the template
 !.env.example
 
@@ -28,6 +29,10 @@ voice_service_ov/_*.log
 node_modules/
 frontend/node_modules/
 frontend/dist/
+build/
+dist/
+release/
+desktop/runtime/
 npm-debug.log*
 
 # --- Runtime / generated data ---
@@ -46,3 +51,4 @@ yolov8n.pt
 Thumbs.db
 .vscode/
 .idea/
+vendor/DECA/

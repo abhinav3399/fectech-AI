@@ -1,7 +1,22 @@
-import React, { Suspense, useRef, useEffect, Component } from 'react';
+import React, { Suspense, useRef, useEffect, useLayoutEffect, Component } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF, OrbitControls, Center, Bounds, Html } from '@react-three/drei';
+import { useGLTF, OrbitControls, Html } from '@react-three/drei';
+import * as THREE from 'three';
 import { getLevel, getMouthSignal } from '../lib/audiolevel';
+import { backendAssetUrl } from '../lib/apiConfig';
+
+// The backend deliberately returns generated files as `/static/models/...` so a
+// web deployment stays same-origin.  In Capacitor, however, that path would be
+// resolved against the WebView's own `http://localhost`, not the LAN/HTTPS API
+// server.  Turn only backend-relative model paths into an absolute API origin.
+function resolveModelUrl(src) {
+    if (!src || /^(?:https?:|blob:|data:)/i.test(src)) return src;
+    try {
+        return backendAssetUrl(src);
+    } catch {
+        return src;
+    }
+}
 
 // A failed/unreachable GLB must NEVER crash the whole app — catch it and show a
 // gentle fallback instead. key={src} resets it when the model changes.
@@ -11,11 +26,31 @@ class GLBErrorBoundary extends Component {
     componentDidCatch(err) { console.warn('Avatar3D: could not load model —', err?.message || err); }
     render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
-
 function Model({ isSpeaking, src }) {
     const { scene } = useGLTF(src);
     const ref = useRef();
+    const fitRef = useRef();
     const mouth = useRef(null);
+    const rig = useRef(null);
+    const blink = useRef({ next: 3.1, started: -1 });
+
+    // Providers export in different units (the local face mesh uses millimetres,
+    // while many hosted GLBs use metres).  Bounds can miss an asynchronously
+    // loaded scene on some WebGL browsers, leaving a millimetre-sized face
+    // filling the whole viewport. Normalize every loaded model ourselves.
+    useLayoutEffect(() => {
+        const group = fitRef.current;
+        if (!group) return;
+        const box = new THREE.Box3().setFromObject(scene);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const longestSide = Math.max(size.x, size.y, size.z);
+        if (!Number.isFinite(longestSide) || longestSide <= 0) return;
+        const scale = 2.35 / longestSide;
+        group.scale.setScalar(scale);
+        // Apply the center offset in the same local units as the scaled scene.
+        group.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    }, [scene]);
 
     // Find the face mesh's lip-sync metadata (baked into the GLB by facemesh3d)
     // once, and cache the pristine vertex positions to deform from / return to.
@@ -38,18 +73,69 @@ function Model({ isSpeaking, src }) {
         };
     }, [scene]);
 
+    useEffect(() => {
+        const targets = [];
+        scene.traverse((o) => {
+            if (o.isMesh) {
+                const materials = Array.isArray(o.material) ? o.material : [o.material];
+                materials.filter(Boolean).forEach((material) => { material.side = THREE.DoubleSide; });
+            }
+            if (!o.isMesh || !o.morphTargetDictionary || !o.morphTargetInfluences) return;
+            targets.push(o);
+        });
+        rig.current = targets.length ? targets : null;
+        return () => { rig.current = null; };
+    }, [scene]);
+
+    const setMorph = (name, value) => {
+        for (const mesh of rig.current || []) {
+            const index = mesh.morphTargetDictionary[name];
+            if (index !== undefined) mesh.morphTargetInfluences[index] = Math.max(0, Math.min(1, value));
+        }
+    };
+
     useFrame((s, delta) => {
         const r = ref.current;
         if (r) {
             const t = s.clock.elapsedTime;
             const lv = isSpeaking ? getLevel() : 0;
-            // Rest at a ~30° (3/4) view so the head reads as dimensional, not dead-flat;
-            // the talking sway is a gentle motion AROUND that angle (never swings to front-on).
-            const REST_YAW = 0.5; // ~28°
-            r.rotation.y = REST_YAW + Math.sin(t * (isSpeaking ? 1.0 : 0.55)) * (isSpeaking ? 0.12 : 0.08);
+            // Keep the identity texture facing the user; only add a tiny natural sway.
+            r.rotation.y = Math.sin(t * (isSpeaking ? 1.0 : 0.55)) * (isSpeaking ? 0.06 : 0.03);
             r.rotation.x = lv * 0.05;
             r.position.y = Math.sin(t * (isSpeaking ? 5 : 2)) * (isSpeaking ? 0.03 : 0.02);
             r.rotation.z = Math.sin(t * (isSpeaking ? 3 : 1.2)) * (isSpeaking ? 0.03 : 0.01);
+        }
+
+        // Drive ARKit-compatible morph targets when the exported asset contains a
+        // facial rig. The signal is measured from the actual playing TTS audio.
+        if (rig.current) {
+            const t = s.clock.elapsedTime;
+            const sig = isSpeaking ? getMouthSignal() : { open: 0, wide: 0, round: 0 };
+            const now = t;
+            const state = blink.current;
+            if (state.started < 0 && now >= state.next) state.started = now;
+            const blinkProgress = state.started >= 0 ? Math.min(1, (now - state.started) / 0.16) : 0;
+            const blinkWeight = state.started >= 0
+                ? (blinkProgress < 0.5 ? blinkProgress * 2 : (1 - blinkProgress) * 2)
+                : 0;
+            if (state.started >= 0 && blinkProgress >= 1) {
+                state.started = -1;
+                state.next = now + 2.7 + (Math.sin(now * 1.7) + 1) * 1.8;
+            }
+            setMorph('jawOpen', sig.open * 0.72);
+            setMorph('mouthOpen', sig.open * 0.62);
+            setMorph('mouthSmileLeft', sig.wide * 0.16);
+            setMorph('mouthSmileRight', sig.wide * 0.16);
+            setMorph('mouthFunnel', sig.round * 0.38);
+            setMorph('eyeBlinkLeft', blinkWeight);
+            setMorph('eyeBlinkRight', Math.max(0, blinkWeight * (0.92 + Math.sin(now * 2.1) * 0.08)));
+            setMorph('eyeLookUpLeft', Math.max(0, Math.sin(now * 0.37)) * 0.08);
+            setMorph('eyeLookUpRight', Math.max(0, Math.sin(now * 0.37)) * 0.08);
+            setMorph('eyeLookDownLeft', Math.max(0, -Math.sin(now * 0.37)) * 0.05);
+            setMorph('eyeLookDownRight', Math.max(0, -Math.sin(now * 0.37)) * 0.05);
+            setMorph('browInnerUp', sig.open * 0.05);
+            setMorph('cheekSquintLeft', sig.wide * 0.08);
+            setMorph('cheekSquintRight', sig.wide * 0.08);
         }
 
         // Lip-sync: deform the mouth vertices to the live voice (viseme-like approximation).
@@ -79,7 +165,13 @@ function Model({ isSpeaking, src }) {
         if ((M.frame = (M.frame + 1) % 2) === 0) M.geom.computeVertexNormals();   // throttle normals
     });
 
-    return <primitive ref={ref} object={scene} />;
+    return (
+        <group ref={ref}>
+            <group ref={fitRef}>
+                <primitive object={scene} />
+            </group>
+        </group>
+    );
 }
 
 function Loader() {
@@ -95,9 +187,9 @@ function Loader() {
 function Stage({ isSpeaking, src }) {
     return (
         <Canvas
-            camera={{ position: [0, 0, 5], fov: 38 }}
+            camera={{ position: [0, 0, 4.5], fov: 32, near: 0.01, far: 100 }}
             style={{ width: '100%', height: '100%' }}
-            dpr={[1, 2.5]}
+            dpr={[1, 2]}
             flat                       // no tone-mapping -> the photo texture stays true & clear
             gl={{ antialias: true }}   // crisp edges on the low-poly mesh
         >
@@ -108,31 +200,26 @@ function Stage({ isSpeaking, src }) {
             <directionalLight position={[-4, 2, 2]} intensity={0.35} color="#dbeafe" /> {/* gentle cool fill */}
             <directionalLight position={[4, 1.5, 2]} intensity={0.3} />             {/* opposite fill, balances the key */}
             <Suspense fallback={<Loader />}>
-                {/* key={src} re-fits Bounds when the model changes (generated mesh). */}
-                <Bounds key={src} fit margin={1.2}>
-                    <Center>
-                        <Model isSpeaking={isSpeaking} src={src} />
-                    </Center>
-                </Bounds>
+                <Model key={src} isSpeaking={isSpeaking} src={src} />
             </Suspense>
-            <OrbitControls enablePan={false} enableZoom={false} minPolarAngle={Math.PI / 3} maxPolarAngle={Math.PI / 1.8} />
+            <OrbitControls enablePan={false} enableZoom minDistance={2.2} maxDistance={8} minPolarAngle={Math.PI / 3} maxPolarAngle={Math.PI / 1.8} />
         </Canvas>
     );
 }
 
-export default function Avatar3D({ isSpeaking = false, src = '/model.glb' }) {
+export default function Avatar3D({ isSpeaking = false, src = null }) {
+    const modelSrc = resolveModelUrl(src);
     const fallback = (
         <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24 }}>
             <div style={{ color: '#94a3b8', fontFamily: 'system-ui', maxWidth: 320, lineHeight: 1.5 }}>
-                Couldn't display this 3D model. Switch back to the photo (the faithful likeness), or regenerate it from the Edit screen.
+                {src ? "Couldn't display this 3D model. Switch back to the photo or regenerate it from the Edit screen." : 'No generated 3D model yet. Generate one from the Edit screen.'}
             </div>
         </div>
     );
+    if (!modelSrc) return fallback;
     return (
-        <GLBErrorBoundary key={src} fallback={fallback}>
-            <Stage isSpeaking={isSpeaking} src={src} />
+        <GLBErrorBoundary key={modelSrc} fallback={fallback}>
+            <Stage isSpeaking={isSpeaking} src={modelSrc} />
         </GLBErrorBoundary>
     );
 }
-
-useGLTF.preload('/model.glb');

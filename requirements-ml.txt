@@ -1,0 +1,20 @@
+# FacTech AI — OPTIONAL heavy ML deps (real recognition models).
+# These may NOT have Python 3.13 wheels and some need C++ build tools.
+# RECOMMENDED: create a separate Python 3.11 or 3.12 venv for these.
+#
+#   py -3.11 -m venv venv-ml
+#   venv-ml\Scripts\activate
+#   pip install -r requirements.txt -r requirements-ml.txt
+#
+# Until installed, the backend runs in DEV fallback mode (deterministic embeddings,
+# object detection disabled). The app boots and every endpoint works either way.
+
+onnxruntime>=1.18          # insightface runtime (has cp313 wheels)
+insightface>=0.7.3         # 512-d face embeddings (buffalo_l) — needs MSVC build tools on Windows
+opencv-python>=4.9         # image decoding for the real models
+ultralytics>=8.2           # YOLOv8n object detection (pulls torch)
+sentence-transformers>=3.0 # 384-d text embeddings for the episodic graph (Feature 2)
+
+# --- Advanced-phase only (Part B); uncomment when you reach those features ---
+# speechbrain>=1.0         # ECAPA-TDNN speaker embeddings (Feature 2)
+# TTS>=0.22                # XTTS cloning voice (Feature 7) — spotty on 3.13

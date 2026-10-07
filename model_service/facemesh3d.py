@@ -264,6 +264,58 @@ def _build_hair_cap(verts, P, img):
     return trimesh.Trimesh(vertices=V, faces=F, visual=bright_textured(uvh, swatch), process=False)
 
 
+def _skin_color(img, P):
+    """Sample a conservative cheek-area color for geometry outside the photo."""
+    arr = np.asarray(img.convert("RGB"))
+    h, w = arr.shape[:2]
+    x0, x1 = int(P[:, 0].min() * w), int(P[:, 0].max() * w)
+    y0, y1 = int(P[:, 1].min() * h), int(P[:, 1].max() * h)
+    xa, xb = max(0, x0 + (x1 - x0) // 5), min(w, x1 - (x1 - x0) // 5)
+    ya, yb = max(0, y0 + (y1 - y0) // 2), min(h, y0 + (y1 - y0) * 4 // 5)
+    patch = arr[ya:yb, xa:xb].reshape(-1, 3)
+    if patch.size < 9:
+        return (160, 120, 100)
+    return tuple(int(c) for c in np.median(patch, axis=0))
+
+
+def _solid_geometry(vertices, faces, color):
+    """Create a non-textured hidden-head component with the same emissive material."""
+    return trimesh.Trimesh(
+        vertices=vertices, faces=faces,
+        visual=bright_textured(None, Image.new("RGB", (8, 8), color)), process=False)
+
+
+def _build_head_volume(img, P, face_width_mm, face_height_mm):
+    """Build plausible unseen head volume behind the identity-preserving face shell.
+
+    A single image cannot reveal the back of a head. This component deliberately uses
+    smooth, neutral anatomy there instead of pretending the front texture is known on
+    hidden surfaces.
+    """
+    skin = _skin_color(img, P)
+    head = trimesh.creation.uv_sphere(radius=1.0, count=[32, 20])
+    head.vertices *= np.array([face_width_mm * 0.58, face_height_mm * 0.68, face_width_mm * 0.48])
+    head.vertices[:, 2] -= face_width_mm * 0.44
+    head.vertices[:, 1] -= face_height_mm * 0.02
+    parts = [_solid_geometry(head.vertices, head.faces, skin)]
+
+    # Ears and a short neck transition are separate smooth volumes, not photo-colored blobs.
+    for side in (-1, 1):
+        ear = trimesh.creation.uv_sphere(radius=1.0, count=[16, 10])
+        ear.vertices *= np.array([face_width_mm * 0.105, face_height_mm * 0.22, face_width_mm * 0.10])
+        ear.vertices[:, 0] += side * face_width_mm * 0.52
+        ear.vertices[:, 1] -= face_height_mm * 0.02
+        ear.vertices[:, 2] -= face_width_mm * 0.28
+        parts.append(_solid_geometry(ear.vertices, ear.faces, skin))
+
+    neck = trimesh.creation.cylinder(
+        radius=face_width_mm * 0.27, height=face_height_mm * 0.42, sections=32)
+    neck.vertices[:, 1] -= face_height_mm * 0.78
+    neck.vertices[:, 2] -= face_width_mm * 0.34
+    parts.append(_solid_geometry(neck.vertices, neck.faces, skin))
+    return parts
+
+
 def build_face_mesh(image_path, out_glb, out_stl, size_mm=110.0, z_scale=0.85, base_mm=6.0):
     img = Image.open(image_path).convert("RGB")
     arr = np.ascontiguousarray(np.array(img))
@@ -303,6 +355,8 @@ def build_face_mesh(image_path, out_glb, out_stl, size_mm=110.0, z_scale=0.85, b
     try:
         scene = trimesh.Scene()
         scene.add_geometry(glb_mesh, geom_name="face")
+        for i, part in enumerate(_build_head_volume(img, P, fw * s, (P[:, 1].max() - P[:, 1].min()) * s)):
+            scene.add_geometry(part, geom_name=f"head_volume_{i}")
         scene.add_geometry(_build_inner_mouth(glb_mesh.vertices, inner), geom_name="mouth_inner")
         # Hair cap — approximate (no GPU). On by default; set HAIR_CAP=0 to ship a bald, clean head.
         if os.getenv("HAIR_CAP", "1").lower() not in ("0", "false", "no"):

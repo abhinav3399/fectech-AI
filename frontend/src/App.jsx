@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bell, X, Pill, Check, Clock } from 'lucide-react';
+import { Bell, X, Pill, Check, Clock, WifiOff } from 'lucide-react';
+import { MotionConfig } from 'framer-motion';
+import { PageTransition } from './components/MotionPrimitives';
 import NavBar from './components/SideNav';
 import Onboarding from './components/Onboarding';
 import HomeView from './pages/HomeView';
@@ -8,8 +10,12 @@ import MemoriesPage from './pages/MemoriesPage';
 import RemindersPage from './pages/RemindersPage';
 import ContactsPage from './pages/ContactsPage';
 import SettingsPage from './pages/SettingsPage';
+import FamilySafetyPage from './pages/FamilySafetyPage';
+import UpdatesPage from './pages/UpdatesPage';
 import { FeedbackHost } from './components/Feedback';
 import EmergencyButton from './components/EmergencyButton';
+import { Capacitor } from '@capacitor/core';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { useAppState, getState, markReminderFired, updateReminder, logAdherence } from './lib/store';
 import './lib/a11y'; // apply saved text-size / contrast / motion prefs on load
 
@@ -17,7 +23,40 @@ function App() {
   const { profile, persona } = useAppState();
   const [view, setView] = useState('home');
   const [dueReminder, setDueReminder] = useState(null);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const dueRef = useRef(null); // id of the reminder currently prompting (so we never stack prompts)
+
+  // Android back-button handling via Capacitor App plugin
+  useEffect(() => {
+    let cleanup = () => {};
+    const setupBackButton = async () => {
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const handle = await CapApp.addListener('backButton', ({ canGoBack }) => {
+          if (view !== 'home') {
+            setView('home');
+          } else {
+            CapApp.exitApp();
+          }
+        });
+        cleanup = () => handle.remove();
+      } catch (e) {
+        // Not running in Capacitor (desktop/browser) — ignore
+      }
+    };
+    setupBackButton();
+    return () => cleanup();
+  }, [view]);
+
+  // Network online/offline detection
+  useEffect(() => {
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
+  }, []);
+
 
   const todayStr = () => new Date().toISOString().slice(0, 10);
   const resolveDue = () => { dueRef.current = null; setDueReminder(null); };
@@ -30,6 +69,10 @@ function App() {
   // per day, and has the companion announce it aloud.
   useEffect(() => {
     const speak = (text, lang) => {
+      if (Capacitor.isNativePlatform()) {
+        TextToSpeech.speak({ text, lang, rate: 0.95, pitch: 1, volume: 1, queueStrategy: 0 }).catch((e) => console.warn('[Reminder TTS] Phone speech unavailable:', e?.message || e));
+        return;
+      }
       if (!window.speechSynthesis) return;
       try {
         window.speechSynthesis.cancel(); // never layer over a voice already speaking
@@ -97,16 +140,26 @@ function App() {
   }
 
   let content;
-  if (view === 'avatar') content = <AvatarPage />;
-  else if (view === 'memories') content = <MemoriesPage />;
+  if (view === 'avatar')    content = <AvatarPage />;
+  else if (view === 'memories')  content = <MemoriesPage />;
   else if (view === 'reminders') content = <RemindersPage />;
-  else if (view === 'contacts') content = <ContactsPage />;
-  else if (view === 'settings') content = <SettingsPage />;
+  else if (view === 'contacts')  content = <ContactsPage />;
+  else if (view === 'family')    content = <FamilySafetyPage />;
+  else if (view === 'updates')   content = <UpdatesPage />;
+  else if (view === 'settings')  content = <SettingsPage />;
   else content = <HomeView onNavigate={setView} />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'transparent', overflow: 'hidden' }}>
+    <MotionConfig reducedMotion="user">
+      <div className={`app-shell ${Capacitor.isNativePlatform() ? 'native-app-shell' : ''}`}>
       <NavBar onViewChange={setView} currentView={view} />
+
+      {isOffline && (
+        <div className="offline-banner">
+          <WifiOff size={14} style={{ display: 'inline', marginRight: 6 }} />
+          OFFLINE MODE
+        </div>
+      )}
 
       {dueReminder && (
         <div className={`reminder-banner ${dueReminder.isMed ? 'med' : ''}`}>
@@ -123,39 +176,69 @@ function App() {
           )}
           <style>{`
             .reminder-banner {
-              position: fixed; top: 84px; left: 50%; transform: translateX(-50%); z-index: 2000;
-              display: flex; align-items: center; gap: var(--s-3); max-width: 92%; flex-wrap: wrap; justify-content: center;
+              position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 2000;
+              display: flex; align-items: center; gap: 10px; max-width: 92%; flex-wrap: wrap; justify-content: center;
               background: var(--glass-strong); backdrop-filter: blur(16px);
               border: 1px solid var(--border-strong); border-left: 3px solid var(--brand-1);
-              color: var(--text);
-              padding: var(--s-3) var(--s-5); border-radius: var(--r-lg);
-              box-shadow: var(--shadow-lg), var(--glow-brand);
-              animation: rb-in var(--dur) var(--ease); font-weight: 600;
+              color: var(--text); padding: 10px 18px; border-radius: 14px;
+              box-shadow: var(--shadow-lg); animation: rb-in 0.2s ease; font-weight: 600;
             }
             .reminder-banner.med { border-left-color: var(--accent-pink); }
             .reminder-banner > svg { color: var(--brand-1); flex-shrink: 0; }
             .reminder-banner.med > svg { color: var(--accent-pink); }
             .reminder-banner > span { flex: 1; min-width: 180px; }
-            .rb-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; flex-shrink: 0; }
-            .rb-act { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: var(--r-md); border: 1px solid var(--border); font-weight: 800; font-size: var(--fs-sm); font-family: inherit; cursor: pointer; transition: transform var(--dur) var(--ease), background var(--dur) var(--ease); }
-            .rb-act.taken { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; border-color: transparent; box-shadow: 0 8px 22px rgba(22,163,74,0.35); }
+            .rb-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+            .rb-act { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--border); font-weight: 800; font-size: 0.85rem; font-family: inherit; cursor: pointer; }
+            .rb-act.taken { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; border-color: transparent; }
             .rb-act.snooze { background: var(--surface-2); color: var(--text); }
             .rb-act.skip { background: var(--surface-2); color: var(--text-muted); }
-            .rb-act:hover { transform: translateY(-1px); }
-            .rb-dismiss { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); width: 30px; height: 30px; border-radius: var(--r-sm); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
-            .rb-dismiss:hover { background: var(--surface-3); color: var(--text); }
-            @keyframes rb-in { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+            .rb-dismiss { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); width: 30px; height: 30px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+            @keyframes rb-in { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
           `}</style>
         </div>
       )}
 
-      <div style={{ flex: 1, paddingTop: '70px', height: '100%', overflow: 'hidden' }}>
-        {content}
-      </div>
+      <main className="app-content">
+        <PageTransition routeKey={view}>{content}</PageTransition>
+      </main>
 
       <EmergencyButton />
       <FeedbackHost />
-    </div>
+
+      <style>{`
+        /* ━━━━━━━━━━━ APP SHELL ━━━━━━━━━━━ */
+        .app-shell {
+          display: flex; flex-direction: column;
+          height: 100dvh; height: 100vh;
+          background: transparent;
+          overflow: hidden;
+        }
+
+        /* Desktop content area */
+        .app-content {
+          flex: 1;
+          padding-top: 64px;   /* top nav height */
+          overflow: hidden;
+          height: 100%;
+        }
+
+        /* Mobile content area — scrollable, padded for both navbars */
+        @media (max-width: 640px) {
+          .app-content {
+            padding-top: 64px;
+            padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+            overflow-y: auto;
+            overflow-x: hidden;
+            -webkit-overflow-scrolling: touch;
+          }
+          /* Light background for mobile */
+          .app-shell {
+            background: linear-gradient(150deg, #eef1ff 0%, #f3efff 60%, #fce7ff 100%);
+          }
+        }
+      `}</style>
+      </div>
+    </MotionConfig>
   );
 }
 

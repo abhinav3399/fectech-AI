@@ -3,8 +3,8 @@
 #   py -3.13 -m venv voice_service/.venv
 #   voice_service/.venv/Scripts/python -m pip install -r voice_service/requirements.txt
 coqui-tts>=0.27.5      # XTTS-v2: local, CPU, zero-shot multilingual voice cloning
-torch>=2.6,<2.9        # <2.9 keeps torchaudio's built-in decoders (>=2.9 forces torchcodec + system ffmpeg)
-torchaudio>=2.6,<2.9
+torch>=2.6
+torchaudio>=2.6
 transformers>=4.44,<5  # 5.x dropped isin_mps_friendly, which coqui-tts 0.27.5 imports
 fastapi
 uvicorn[standard]

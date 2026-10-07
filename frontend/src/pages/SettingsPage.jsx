@@ -4,18 +4,20 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import {
-    User, Heart, Brain, Accessibility, Sun, Moon, Phone, Plus, Trash2, X,
+    User, Heart, Brain, Accessibility, Sun, Moon, Phone, Plus, Trash2, X, Activity,
     Download, RotateCcw, Check, Pencil, Info,
 } from 'lucide-react';
 import {
-    useAppState, getState, setProfile, setPersona, setEmergencyContacts, resetAll,
+    useAppState, getState, setProfile, setPersona, setEmergencyContacts, setAppSettings, resetAll,
 } from '../lib/store';
+import { OFFLINE_MODEL, OFFLINE_MODEL_LICENSE } from '../lib/offlineAi';
+import { checkOllama, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL } from '../lib/ollama';
 import { getA11y, setA11y } from '../lib/a11y';
 import { getTheme, setTheme } from '../lib/theme';
 import { toast, confirmAction } from '../components/Feedback';
 import PersonaEditor from '../components/PersonaEditor';
+import { API_BASE, backendHealthUrl, getBackendSettingValue, normalizeBackendBase } from '../lib/apiConfig';
 
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
 const SIZES = [{ k: 'normal', label: 'Normal' }, { k: 'large', label: 'Large' }, { k: 'largest', label: 'Largest' }];
 
 function Toggle({ on, onClick, label, hint }) {
@@ -28,7 +30,7 @@ function Toggle({ on, onClick, label, hint }) {
 }
 
 export default function SettingsPage() {
-    const { profile, persona, emergencyContacts = [] } = useAppState();
+    const { profile, persona, emergencyContacts = [], settings = {} } = useAppState();
     const [name, setName] = useState(profile?.name || '');
     const [age, setAge] = useState(profile?.age || '');
     const [a11y, setA11yState] = useState(getA11y());
@@ -40,6 +42,22 @@ export default function SettingsPage() {
     const [captions, setCaptions] = useState(() => {
         try { return localStorage.getItem('factech_captions') !== 'off'; } catch (e) { return true; }
     });
+    const [backendUrl, setBackendUrl] = useState(() => getBackendSettingValue());
+    const [backendTesting, setBackendTesting] = useState(false);
+    const [backendFeedback, setBackendFeedback] = useState(null);
+    const [ollamaUrl, setOllamaUrl] = useState(settings.ollamaUrl || DEFAULT_OLLAMA_URL);
+    const [ollamaModel, setOllamaModel] = useState(settings.ollamaModel || DEFAULT_OLLAMA_MODEL);
+    const [ollamaTesting, setOllamaTesting] = useState(false);
+    const [ollamaFeedback, setOllamaFeedback] = useState(null);
+
+    useEffect(() => {
+        setBackendUrl(settings.backendUrl || getBackendSettingValue());
+    }, [settings.backendUrl]);
+
+    useEffect(() => {
+        setOllamaUrl(settings.ollamaUrl || DEFAULT_OLLAMA_URL);
+        setOllamaModel(settings.ollamaModel || DEFAULT_OLLAMA_MODEL);
+    }, [settings.ollamaUrl, settings.ollamaModel]);
 
     const proactiveOn = persona?.proactiveCheckins !== false;
 
@@ -75,6 +93,75 @@ export default function SettingsPage() {
         if (!ok) return;
         try { await axios.post(`${API_BASE}/memory/forget`, { id: m.id }); } catch (e) { /* fail-soft */ }
         setMems((list) => list.filter((x) => x.id !== m.id)); toast('Forgotten', 'info');
+    };
+
+    const saveBackendUrl = () => {
+        try {
+            const normalized = normalizeBackendBase(backendUrl);
+            setAppSettings({ backendUrl: normalized });
+            setBackendUrl(normalized);
+            setBackendFeedback({ type: 'success', text: normalized ? 'Backend address saved on this device.' : 'Using the build-time backend address.' });
+        } catch (error) {
+            setBackendFeedback({ type: 'error', text: error.message });
+        }
+    };
+
+    const testBackend = async () => {
+        setBackendTesting(true);
+        setBackendFeedback({ type: 'info', text: 'Checking backend connection…' });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+            const response = await fetch(backendHealthUrl(backendUrl), { signal: controller.signal, headers: { Accept: 'application/json' } });
+            if (!response.ok) throw new Error(`Backend returned HTTP ${response.status}.`);
+            const health = await response.json();
+            setBackendFeedback({
+                type: 'success',
+                text: `Connected${health.model_3d_provider ? ` · 3D provider: ${health.model_3d_provider}` : ''}. This confirms API reachability, not that every optional service is configured.`,
+            });
+        } catch (error) {
+            const detail = error.name === 'AbortError' ? 'Connection timed out.' : error.message;
+            setBackendFeedback({ type: 'error', text: `${detail} Check the HTTPS/VPN address and make sure the backend is running.` });
+        } finally {
+            clearTimeout(timeout);
+            setBackendTesting(false);
+        }
+    };
+
+    const saveOllamaSettings = () => {
+        const url = ollamaUrl.trim().replace(/\/+$/, '');
+        try {
+            const parsed = new URL(url);
+            if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+        } catch {
+            setOllamaFeedback({ type: 'error', text: 'Enter a valid http:// or https:// server URL.' });
+            return;
+        }
+        if (!ollamaModel.trim()) {
+            setOllamaFeedback({ type: 'error', text: 'Enter the name of an installed Ollama model.' });
+            return;
+        }
+        setAppSettings({ ollamaUrl: url, ollamaModel: ollamaModel.trim() });
+        setOllamaUrl(url);
+        setOllamaModel(ollamaModel.trim());
+        setOllamaFeedback({ type: 'success', text: 'Ollama settings saved on this device.' });
+    };
+
+    const testOllama = async () => {
+        setOllamaTesting(true);
+        setOllamaFeedback({ type: 'info', text: 'Checking the local server…' });
+        try {
+            const result = await checkOllama({ baseUrl: ollamaUrl, model: ollamaModel });
+            if (result.modelInstalled) {
+                setOllamaFeedback({ type: 'success', text: `Connected. “${result.model}” is installed and ready.` });
+            } else {
+                setOllamaFeedback({ type: 'error', text: `Server is reachable, but “${result.model}” is not installed. Install it in your phone’s Ollama runtime.` });
+            }
+        } catch (error) {
+            setOllamaFeedback({ type: 'error', text: `${error.message} Start the Ollama-compatible server on this phone first.` });
+        } finally {
+            setOllamaTesting(false);
+        }
     };
 
     const addContact = () => {
@@ -194,10 +281,67 @@ export default function SettingsPage() {
                 <Toggle on={captions} onClick={flipCaptions} label="Captions" hint="Show large on-screen text of what the companion says." />
             </section>
 
+            {/* BACKEND CONNECTION */}
+            <section className="set-card">
+                <div className="set-card-head"><Activity size={18} /><h2>Backend connection</h2></div>
+                <p className="set-card-help">Connect this APK to your FastAPI server. Use HTTPS or a private VPN address, for example https://api.example.com or a VPN-reachable PC address with port 8010. The app cannot reach a plain home-LAN address after the phone leaves that network.</p>
+                <label className="set-field" htmlFor="backend-url"><span>Backend URL</span>
+                    <input id="backend-url" type="url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={backendUrl} onChange={(event) => { setBackendUrl(event.target.value); setBackendFeedback(null); }} placeholder="https://your-backend.example.com" />
+                </label>
+                <div className="backend-actions">
+                    <button className="set-btn" type="button" onClick={saveBackendUrl}>Save address</button>
+                    <button className="set-btn primary" type="button" onClick={testBackend} disabled={backendTesting || !backendUrl.trim()}>{backendTesting ? 'Checking…' : 'Test connection'}</button>
+                </div>
+                {backendFeedback && <p className={`backend-feedback ${backendFeedback.type}`} role="status" aria-live="polite">{backendFeedback.text}</p>}
+                <p className="set-card-help backend-note">This app does not host or expose your PC. Remote access requires your own HTTPS deployment or a private VPN/tunnel. Keep the 3D worker private behind the backend.</p>
+            </section>
+
+            {/* AI MODE */}
+            <section className="set-card">
+                <div className="set-card-head"><Brain size={18} /><h2>AI mode</h2></div>
+                <p className="set-card-help">Auto uses phone-local Ollama when available, then the configured backend, then the downloaded offline model. Ollama itself is not bundled in this APK.</p>
+                <div className="set-sizes ai-mode-selector">
+                    {[
+                        ['auto', 'Auto'],
+                        ['ollama', 'Ollama'],
+                        ['offline', 'Offline'],
+                        ['online', 'Online'],
+                    ].map(([value, label]) => (
+                        <button key={value} className={`set-size ${(settings.aiMode || 'auto') === value ? 'on' : ''}`} onClick={() => setAppSettings({ aiMode: value })}>{label}</button>
+                    ))}
+                </div>
+                <p className="set-card-help ai-model-note">
+                    {settings.aiMode === 'ollama'
+                        ? 'Ollama mode connects directly to the server below. The selected model must already be installed on your phone.'
+                        : settings.aiMode === 'offline'
+                            ? 'Offline mode uses Transformers.js. The model downloads on first use and is cached privately on this device.'
+                            : settings.aiMode === 'online'
+                                ? 'Online mode uses only the configured Factech backend.'
+                                : 'Auto tries phone-local Ollama on Android, then the configured backend, then Transformers.js. The offline model needs one internet-connected download.'}
+                    {' '}Offline model: {OFFLINE_MODEL} ({OFFLINE_MODEL_LICENSE}).
+                </p>
+                <div className="ollama-config">
+                    <label className="set-field">
+                        <span>Ollama server URL</span>
+                        <input value={ollamaUrl} onChange={(event) => { setOllamaUrl(event.target.value); setOllamaFeedback(null); }} placeholder="http://127.0.0.1:11434" inputMode="url" autoCapitalize="none" spellCheck={false} />
+                    </label>
+                    <label className="set-field">
+                        <span>Installed model name</span>
+                        <input value={ollamaModel} onChange={(event) => { setOllamaModel(event.target.value); setOllamaFeedback(null); }} placeholder="llama3.2:3b" autoCapitalize="none" spellCheck={false} />
+                    </label>
+                    <div className="ollama-actions">
+                        <button className="set-btn" type="button" onClick={saveOllamaSettings}>Save local settings</button>
+                        <button className="set-btn primary" type="button" onClick={testOllama} disabled={ollamaTesting || !ollamaUrl.trim() || !ollamaModel.trim()}>{ollamaTesting ? 'Checking…' : 'Test connection'}</button>
+                    </div>
+                    {ollamaFeedback && <p className={`ollama-feedback ${ollamaFeedback.type}`} role="status" aria-live="polite">{ollamaFeedback.text}</p>}
+                    <p className="set-card-help ollama-note">For this phone, keep the URL at 127.0.0.1 unless your Android runtime shows another address. Install/start an Ollama-compatible Android server separately; this APK does not ship Ollama or its model files.</p>
+                </div>
+            </section>
+
             {/* PRIVACY & DATA */}
             <section className="set-card">
                 <div className="set-card-head"><Download size={18} /><h2>Privacy &amp; data</h2></div>
-                <p className="set-card-help">Everything is stored on this device. Nothing here uses an outside service.</p>
+                <p className="set-card-help">Your profile, reminders, and app preferences are stored on this device. Features that need a server send requests to the backend URL configured above.</p>
                 <div className="set-actions">
                     <button className="set-btn" onClick={exportData}><Download size={16} /> Export my data</button>
                     <button className="set-btn danger" onClick={resetEverything}><RotateCcw size={16} /> Reset everything</button>
@@ -229,11 +373,12 @@ export default function SettingsPage() {
         .set-card-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 800; }
         .set-card-head > svg { color: var(--brand-1); }
         .set-card-help { color: var(--text-muted); font-size: var(--fs-sm); margin: 0 0 var(--s-4); line-height: 1.5; }
-        .set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); margin-bottom: var(--s-3); }
+        .set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); margin-bottom: var(--s-3); min-width: 0; }
+        .set-grid > * { width: 100%; min-width: 0; box-sizing: border-box; }
         @media (max-width: 560px) { .set-grid { grid-template-columns: 1fr; } }
         .set-field { display: flex; flex-direction: column; gap: var(--s-2); margin-bottom: var(--s-3); }
         .set-field > span { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 600; }
-        .set-field input, .set-input { background: var(--glass-strong); border: 1px solid var(--border); border-radius: var(--r-md); padding: 0 14px; min-height: 48px; color: var(--text); font-size: var(--fs-md); font-family: inherit; outline: none; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+        .set-field input, .set-input { width: 100%; min-width: 0; box-sizing: border-box; background: var(--glass-strong); border: 1px solid var(--border); border-radius: var(--r-md); padding: 0 14px; min-height: 48px; color: var(--text); font-size: var(--fs-md); font-family: inherit; outline: none; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
         .set-field input:focus, .set-input:focus { border-color: var(--brand-1); box-shadow: 0 0 0 3px var(--ring); }
         .set-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 var(--s-5); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-weight: 700; font-size: var(--fs-sm); font-family: inherit; cursor: pointer; transition: background var(--dur) var(--ease), transform var(--dur) var(--ease); }
         .set-btn:hover:not(:disabled) { background: var(--surface-3); transform: translateY(-1px); }
@@ -253,9 +398,25 @@ export default function SettingsPage() {
         .set-mem span { font-size: var(--fs-sm); line-height: 1.4; }
         .set-mem button { flex-shrink: 0; min-height: 36px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); font-weight: 700; font-size: var(--fs-xs); font-family: inherit; cursor: pointer; }
         .set-mem button:hover { background: rgba(248,113,113,0.18); color: var(--danger); }
+        .backend-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-3); }
+        .backend-feedback { margin: var(--s-3) 0 0; font-size: var(--fs-sm); line-height: 1.5; overflow-wrap: anywhere; }
+        .backend-feedback.success { color: var(--success); }
+        .backend-feedback.error { color: var(--danger); }
+        .backend-feedback.info { color: var(--text-muted); }
+        .backend-note { margin: var(--s-3) 0 0; }
         .set-sizes { display: flex; gap: var(--s-2); }
         .set-size { flex: 1; min-height: 48px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted); font-weight: 700; font-size: var(--fs-sm); font-family: inherit; cursor: pointer; }
         .set-size.on { background: var(--grad-brand); color: var(--text-on-brand); border-color: transparent; }
+        .ai-mode-selector { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .ollama-config { display: grid; gap: var(--s-3); padding-top: var(--s-4); border-top: 1px solid var(--border); }
+        .ollama-config .set-field { margin: 0; }
+        .ollama-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+        .ollama-feedback { margin: 0; font-size: var(--fs-sm); line-height: 1.5; }
+        .ollama-feedback.success { color: var(--success); }
+        .ollama-feedback.error { color: var(--danger); }
+        .ollama-feedback.info { color: var(--text-muted); }
+        .ollama-note { margin: 0; }
+        @media (max-width: 420px) { .ai-mode-selector { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
         .set-toggle { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); width: 100%; min-height: 56px; padding: 0 var(--s-3); margin-bottom: var(--s-2); border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-1); cursor: pointer; font-family: inherit; text-align: left; }
         .set-toggle:hover { background: var(--surface-2); }
         .set-toggle-text { display: flex; flex-direction: column; gap: 2px; }

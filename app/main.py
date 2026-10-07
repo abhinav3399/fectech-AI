@@ -1,11 +1,14 @@
 import os
+import sys
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2" # Suppress TF Info/Warnings
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
+import logging
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from apscheduler.schedulers.background import BackgroundScheduler
 from app.core.config import settings
 
 # print("DEBUG: Importing API Router...", flush=True)
@@ -16,7 +19,14 @@ from app.api import persona_endpoint
 from app.api import mesh_endpoint
 from app.api import auth_endpoint
 from app.api import reminders_endpoint
+from app.api import family_endpoint
+from app.api import health_endpoint
 from app.db import init_db
+from app.services.scheduler_service import get_scheduler
+
+logger = logging.getLogger(__name__)
+
+RUNTIME_ROOT = os.getenv("FACTECH_RUNTIME_ROOT") or getattr(sys, "_MEIPASS", None) or os.getcwd()
 # print("DEBUG: Imports Done.", flush=True)
 
 app = FastAPI(
@@ -24,11 +34,38 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+# Global scheduler for background tasks
+_background_scheduler = BackgroundScheduler(daemon=True)
+
 
 @app.on_event("startup")
 def _startup():
     # Create the accounts/state tables if they don't exist yet (non-destructive).
     init_db()
+    
+    # Start family update scheduler (runs every minute to check if updates are due)
+    try:
+        scheduler = get_scheduler(dev_mode=True)
+        _background_scheduler.add_job(
+            scheduler.process_scheduled_updates,
+            'interval',
+            minutes=1,
+            id='family_update_scheduler',
+            name='Family Update Scheduler',
+            replace_existing=True
+        )
+        _background_scheduler.start()
+        logger.info("Family update scheduler started (runs every minute)")
+    except Exception as e:
+        logger.error(f"Failed to start family update scheduler: {e}")
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    """Shutdown the background scheduler."""
+    if _background_scheduler.running:
+        _background_scheduler.shutdown()
+        logger.info("Background scheduler shut down")
 
 # CORS — restricted allowlist (set ALLOWED_ORIGINS in .env). Wildcard "*" with
 # credentials is both invalid per spec and unsafe for a health-data product.
@@ -41,7 +78,7 @@ app.add_middleware(
 )
 
 # Mount static files (for dashboard)
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(RUNTIME_ROOT, "static"), html=True), name="static")
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
@@ -50,6 +87,8 @@ app.include_router(persona_endpoint.router, prefix=settings.API_V1_STR)
 app.include_router(mesh_endpoint.router, prefix=settings.API_V1_STR)
 app.include_router(auth_endpoint.router, prefix=settings.API_V1_STR)
 app.include_router(reminders_endpoint.router, prefix=settings.API_V1_STR)
+app.include_router(family_endpoint.router, prefix=settings.API_V1_STR)
+app.include_router(health_endpoint.router, prefix=settings.API_V1_STR)
 
 
 # Liveness + readiness. Registered before the SPA catch-all so it always wins.
@@ -66,9 +105,10 @@ def health():
 
 # --- Frontend Serving (Deployment) ---
 # Check if frontend build exists (Render/Production)
-if os.path.exists("frontend/dist"):
-    app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
-    _DIST = os.path.realpath("frontend/dist")
+_DIST_ROOT = os.path.join(RUNTIME_ROOT, "frontend", "dist")
+if os.path.exists(_DIST_ROOT):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_DIST_ROOT, "assets")), name="assets")
+    _DIST = os.path.realpath(_DIST_ROOT)
     _INDEX = os.path.join(_DIST, "index.html")
 
     @app.get("/{full_path:path}")
@@ -88,8 +128,8 @@ if os.path.exists("frontend/dist"):
 @app.get("/")
 def root():
     # If build exists, serve it
-    if os.path.exists("frontend/dist/index.html"):
-        return FileResponse("frontend/dist/index.html")
+    if os.path.exists(os.path.join(_DIST_ROOT, "index.html")):
+        return FileResponse(os.path.join(_DIST_ROOT, "index.html"))
     return {"message": "Memory for the Forgotten API is running (Dev Mode)"}
 
 @app.get("/report", response_class=HTMLResponse)

@@ -3,8 +3,7 @@ import axios from 'axios';
 import { Volume2, Save, X, Upload, Camera, User, Box } from 'lucide-react';
 import AudioRecorder from './AudioRecorder';
 import FaceCaptureModal from './FaceCaptureModal';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
+import { API_BASE } from '../lib/apiConfig';
 
 const blobToDataUrl = (blob) =>
     new Promise((resolve) => {
@@ -193,14 +192,20 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
         e.target.value = '';
     };
 
-    // Generate a real 3D mesh from the face photo via the backend (Meshy).
+    // Generate a 3D mesh from the face photo using the backend's configured provider.
     const generate3D = async () => {
         if (!faceImage || gen.active) return;
         setGen({ active: true, progress: 0, error: null });
         try {
             const sub = await axios.post(`${API_BASE}/generate-3d`, { image: faceImage }, { timeout: 60000 });
             if (sub.data?.status !== 'submitted') {
-                setGen({ active: false, progress: 0, error: sub.data?.message || 'Could not start generation.' });
+                const raw = sub.data?.message || 'Could not start generation.';
+                const message = /no 3d provider configured|not set up yet/i.test(raw)
+                    ? 'No 3D provider is configured. Run start_local.bat to use this PC’s local CPU model service, or configure a hosted provider on the backend.'
+                    : /all connection attempts failed|connect(?:ion)? refused/i.test(raw)
+                        ? 'The backend cannot reach its 3D worker. Start start_local.bat and check that the local worker on port 8800 is ready.'
+                        : raw;
+                setGen({ active: false, progress: 0, error: message });
                 return;
             }
             const taskId = sub.data.task_id;
@@ -215,14 +220,20 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
                     return;
                 }
                 if (['FAILED', 'CANCELED', 'error'].includes(d.status)) {
-                    setGen({ active: false, progress: 0, error: d.message || 'Generation failed.' });
+                    setGen({ active: false, progress: 0, error: d.message || d.task_error?.message || '3D generation failed.' });
                     return;
                 }
                 setGen({ active: true, progress: d.progress || 0, error: null });
             }
             setGen({ active: false, progress: 0, error: 'Timed out — please try again.' });
         } catch (e) {
-            setGen({ active: false, progress: 0, error: 'Generation request failed.' });
+            const raw = e.response?.data?.message || e.response?.data?.detail || e.message || 'Generation request failed.';
+            const msg = /no 3d provider configured|not set up yet/i.test(raw)
+                ? 'No 3D provider is configured. Run start_local.bat to use this PC’s local CPU model service, or configure a hosted provider on the backend.'
+                : /all connection attempts failed|connect(?:ion)? refused/i.test(raw)
+                    ? 'The backend cannot reach its 3D worker. Start start_local.bat and check that the local worker on port 8800 is ready.'
+                    : e.response ? raw : 'Could not reach the backend. Check its URL and VPN/network connection.';
+            setGen({ active: false, progress: 0, error: msg });
         }
     };
 
@@ -494,7 +505,7 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
                 </div>
                 {faceImage && (
                     <div className="pe-gen">
-                        <p className="pe-gen-note">The real photo is the faithful likeness. A 3D model is an <em>approximate</em> artistic likeness built from this one photo — it won't match exactly and each run differs. For the best result use a clear, front-facing, well-lit photo. <em>(Needs a Meshy API key on the backend.)</em></p>
+                        <p className="pe-gen-note">The real photo is the faithful likeness. A 3D model is an <em>approximate</em> likeness built from one photo, so it won't match exactly. Use a clear, front-facing, well-lit photo. Generation uses the backend's configured 3D provider; the local CPU worker needs no Meshy key, Blender, or GPU.</p>
                         <button type="button" className="pe-gen-btn" onClick={generate3D} disabled={gen.active}>
                             <Box size={15} />
                             {gen.active ? `Generating 3D model… ${gen.progress}%` : modelUrl ? 'Regenerate 3D model' : 'Generate 3D model from photo'}

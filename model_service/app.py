@@ -50,8 +50,8 @@ def submit(payload: dict = Body(...)):
             glb, stl = generate(src, cfg.OUT_DIR, tid,
                                 on_progress=lambda p: worker.set_progress(tid, p))
             base = cfg.PUBLIC_BASE.rstrip("/")
-            worker.complete(tid, f"{base}/files/{os.path.basename(glb)}",
-                            f"{base}/files/{os.path.basename(stl)}")
+            stl_url = f"{base}/files/{os.path.basename(stl)}" if stl else None
+            worker.complete(tid, f"{base}/files/{os.path.basename(glb)}", stl_url)
         except Exception as e:
             import traceback
             traceback.print_exc()

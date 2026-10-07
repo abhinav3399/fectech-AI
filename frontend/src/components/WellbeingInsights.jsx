@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { Activity, Sparkles, AlertCircle, Lightbulb, TrendingUp } from 'lucide-react';
 import { useAppState, addInsight } from '../lib/store';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
+import { API_BASE } from '../lib/apiConfig';
 
 const MOOD = {
     positive: { label: 'Positive', color: '#34d399', score: 4 }, // success

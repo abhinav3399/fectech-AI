@@ -14,7 +14,8 @@ _cascade = None
 def _detector():
     global _cascade
     if _cascade is None:
-        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        import os
+        path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
         _cascade = cv2.CascadeClassifier(path)
     return _cascade
 

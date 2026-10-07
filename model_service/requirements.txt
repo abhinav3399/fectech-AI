@@ -20,3 +20,5 @@ mediapipe
 #   InstantMesh: https://github.com/TencentARC/InstantMesh    (Apache-2.0)
 # Blender (optional, higher-quality export): install Blender 3.x/4.x and set BLENDER_PATH,
 #   or `pip install bpy` to use it as a module.
+# DECA is not installed here. Use its isolated Python 3.7-era environment and
+# configure DECA_ROOT/DECA_PYTHON before setting MODEL_3D_PIPELINE=DECA.

@@ -2,10 +2,11 @@
 // and memories. Persisted to localStorage. Every screen reads from here, so
 // the persona is built once and multiplied across Home, Avatar and Memories.
 import { useSyncExternalStore } from 'react';
+import { hydrateState, persistState } from './localDb';
+import { API_BASE, setRuntimeBackendBase } from './apiConfig';
 
 const KEY = 'factech_state_v1';
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
-const defaultState = { profile: null, persona: null, memories: [], transcript: [], reminders: [], insightsHistory: [], emergencyContacts: [], distressLog: [], adherence: [] };
+const defaultState = { profile: null, persona: null, memories: [], transcript: [], reminders: [], insightsHistory: [], emergencyContacts: [], distressLog: [], adherence: [], settings: { aiMode: 'auto' } };
 
 function load() {
     try {
@@ -20,9 +21,23 @@ const listeners = new Set();
 
 function persist() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* ignore quota */ }
+    persistState(state);
 }
 function emit() { listeners.forEach((l) => l()); }
 function set(next) { state = { ...state, ...next }; persist(); emit(); }
+
+// Native builds hydrate the same store from SQLite. Browsers keep the existing
+// synchronous localStorage path, while Android gets a durable native copy.
+hydrateState().then((saved) => {
+    if (saved && typeof saved === 'object') {
+        state = { ...defaultState, ...state, ...saved, settings: { ...(state.settings || {}), ...(saved.settings || {}) } };
+        setRuntimeBackendBase(state.settings?.backendUrl || '');
+        try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* ignore quota */ }
+        emit();
+    } else {
+        persistState(state);
+    }
+}).catch(() => { /* localStorage remains the fallback */ });
 
 export function getState() { return state; }
 export function subscribe(listener) {
@@ -32,6 +47,12 @@ export function subscribe(listener) {
 
 export function setProfile(profile) { set({ profile }); }
 export function setPersona(persona) { set({ persona }); }
+export function setAppSettings(patch) {
+    if (Object.prototype.hasOwnProperty.call(patch, 'backendUrl')) {
+        setRuntimeBackendBase(patch.backendUrl);
+    }
+    set({ settings: { ...(state.settings || {}), ...patch } });
+}
 
 export function addMemory(mem) {
     const m = {
@@ -117,7 +138,10 @@ export function logAdherence({ reminderId, title, type, status }) {
 // --- Emergency contacts (the "Call my family" safety button) ---
 export function setEmergencyContacts(list) { set({ emergencyContacts: Array.isArray(list) ? list : [] }); }
 
-export function resetAll() { set({ ...defaultState }); }
+export function resetAll() {
+    setRuntimeBackendBase('');
+    set({ ...defaultState });
+}
 
 // React hook — re-renders any component when state changes.
 export function useAppState() {

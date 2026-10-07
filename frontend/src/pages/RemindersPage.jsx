@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { Pill, Utensils, CalendarClock, Plus, Trash2, Pencil, Clock, Volume2, ShieldCheck } from 'lucide-react';
 import { useAppState, addReminder, updateReminder, toggleReminder, removeReminder } from '../lib/store';
 import { toast, confirmAction } from '../components/Feedback';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
+import { API_BASE } from '../lib/apiConfig';
 
 const TYPES = {
     medication: { icon: Pill, color: '#f472b6', label: 'Medication' },
@@ -34,6 +34,10 @@ export default function RemindersPage() {
     const [freq, setFreq] = useState('daily');
     const [editingId, setEditingId] = useState(null);
 
+    // OpenFDA drug info state
+    const [drugInfo, setDrugInfo]       = useState({});
+    const [drugLoading, setDrugLoading] = useState({});
+
     const companion = persona?.name || 'Your companion';
     const uname = profile?.name || 'dear';
     const previewLine = title.trim() ? sayLine(type, title.trim(), uname) : '';
@@ -48,6 +52,20 @@ export default function RemindersPage() {
             .then((d) => { if (d?.summary) setAdherence(d.summary); })
             .catch(() => { /* offline — strips just won't show */ });
     }, [profile?.name, reminders.length]);
+
+    const fetchDrugInfo = async (medName) => {
+        if (!medName || drugInfo[medName] || drugLoading[medName]) return;
+        setDrugLoading(prev => ({ ...prev, [medName]: true }));
+        try {
+            const res  = await fetch(`${API_BASE}/health-apis/drug?name=${encodeURIComponent(medName)}`);
+            const data = await res.json();
+            setDrugInfo(prev => ({ ...prev, [medName]: data }));
+        } catch {
+            setDrugInfo(prev => ({ ...prev, [medName]: { found: false } }));
+        } finally {
+            setDrugLoading(prev => ({ ...prev, [medName]: false }));
+        }
+    };
 
     const reset = () => { setType('medication'); setTitle(''); setDesc(''); setTime('09:00'); setFreq('daily'); setEditingId(null); };
 
@@ -155,9 +173,17 @@ export default function RemindersPage() {
                                     const t = TYPES[r.type] || TYPES.event;
                                     const Icon = t.icon;
                                     const on = r.enabled !== false;
-                                    return (
-                                        <div key={r.id} className={`rp-item ${on ? '' : 'off'}`}>
-                                            <div className="rp-item-ic" style={{ background: `${t.color}22`, color: t.color }}><Icon size={20} /></div>
+                                     return (
+                                         <motion.div
+                                             key={r.id}
+                                             layout
+                                             initial={{ opacity: 0, y: 10 }}
+                                             animate={{ opacity: 1, y: 0 }}
+                                             whileHover={{ y: -2 }}
+                                             transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                                             className={`rp-item ${on ? '' : 'off'}`}
+                                         >
+                                             <div className="rp-item-ic" style={{ background: `${t.color}22`, color: t.color }}><Icon size={20} /></div>
                                             <div className="rp-item-body">
                                                 <div className="rp-item-top">
                                                     <span className="rp-item-title">{r.title}</span>
@@ -168,6 +194,41 @@ export default function RemindersPage() {
                                                 {r.type === 'medication' && adherence[r.id] && (
                                                     <div className="rp-item-adh"><Pill size={12} /> Taken {adherence[r.id].taken}/{adherence[r.id].total} this week</div>
                                                 )}
+                                                {r.type === 'medication' && (
+                                                    <div className="rp-drug-info">
+                                                        <button
+                                                            className="rp-drug-btn"
+                                                            onClick={() => fetchDrugInfo(r.title)}
+                                                            disabled={drugLoading[r.title]}
+                                                        >
+                                                            💊 {drugLoading[r.title] ? 'Loading…' : 'Drug Info (FDA)'}
+                                                        </button>
+                                                        {drugInfo[r.title]?.found === true && (
+                                                            <div className="rp-drug-card">
+                                                                <div className="rp-drug-name">{drugInfo[r.title].brand_name}</div>
+                                                                {drugInfo[r.title].purpose && (
+                                                                    <div className="rp-drug-section">
+                                                                        <span className="rp-drug-label">Purpose:</span> {drugInfo[r.title].purpose}
+                                                                    </div>
+                                                                )}
+                                                                {drugInfo[r.title].dosage && (
+                                                                    <div className="rp-drug-section">
+                                                                        <span className="rp-drug-label">Dosage:</span> {drugInfo[r.title].dosage}
+                                                                    </div>
+                                                                )}
+                                                                {drugInfo[r.title].warnings && (
+                                                                    <div className="rp-drug-section rp-drug-warn">
+                                                                        <span className="rp-drug-label">⚠ Warning:</span> {drugInfo[r.title].warnings.slice(0,200)}…
+                                                                    </div>
+                                                                )}
+                                                                <p className="rp-drug-src">Source: OpenFDA</p>
+                                                            </div>
+                                                        )}
+                                                        {drugInfo[r.title]?.found === false && (
+                                                            <p className="rp-drug-na">No FDA data found for "{r.title}".</p>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="rp-item-actions">
                                                 <button className={`rp-switch ${on ? 'on' : ''}`} onClick={() => toggleReminder(r.id)}
@@ -176,10 +237,10 @@ export default function RemindersPage() {
                                                 </button>
                                                 <button className="rp-ic-btn" onClick={() => edit(r)} aria-label={`Edit ${r.title}`}><Pencil size={15} /></button>
                                                 <button className="rp-ic-btn danger" onClick={() => del(r)} aria-label={`Delete ${r.title}`}><Trash2 size={15} /></button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                             </div>
+                                         </motion.div>
+                                     );
+                                 })}
                             </div>
                         )}
                     </section>
@@ -203,8 +264,8 @@ export default function RemindersPage() {
             color: var(--text-dim); margin: var(--s-5) 0 var(--s-2); }
         .rp-opt { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--text-dim); }
 
-        .rp-cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-2); }
-        .rp-cat { display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 72px; padding: var(--s-3);
+        .rp-cats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-2); min-width: 0; }
+        .rp-cat { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 72px; padding: var(--s-3);
             border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted);
             font-family: inherit; font-weight: 700; font-size: var(--fs-sm); cursor: pointer;
             transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease); }
@@ -250,7 +311,7 @@ export default function RemindersPage() {
         .rp-empty p { margin: 0; line-height: 1.6; max-width: 340px; font-size: var(--fs-md); }
 
         .rp-list { display: flex; flex-direction: column; gap: var(--s-3); }
-        .rp-item { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-4); border-radius: var(--r-lg);
+        .rp-item { display: flex; align-items: center; gap: var(--s-3); min-width: 0; padding: var(--s-4); border-radius: var(--r-lg);
             background: var(--surface-1); border: 1px solid var(--border); transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
         .rp-item:hover { border-color: var(--border-strong); background: var(--surface-2); }
         .rp-item.off { opacity: 0.55; }
@@ -278,6 +339,18 @@ export default function RemindersPage() {
         .rp-ic-btn.danger:hover { background: rgba(248,113,113,0.18); color: var(--danger); border-color: rgba(248,113,113,0.4); }
 
         @media (max-width: 560px) { .rp-inner { padding: var(--s-6) var(--s-4); } .rp-row { flex-direction: column; gap: 0; } }
+
+        /* Drug info (OpenFDA) */
+        .rp-drug-info { margin-top: 8px; }
+        .rp-drug-btn { background: rgba(79,70,229,0.08); border: 1px solid rgba(79,70,229,0.2); color: #4f46e5; border-radius: 8px; padding: 5px 12px; font-size: 0.8rem; font-weight: 700; cursor: pointer; font-family: inherit; }
+        .rp-drug-btn:disabled { opacity: 0.6; cursor: default; }
+        .rp-drug-card { background: var(--glass); border: 1px solid rgba(79,70,229,0.15); border-radius: 12px; padding: 12px; margin-top: 8px; font-size: 0.82rem; }
+        .rp-drug-name { font-weight: 800; font-size: 0.9rem; color: var(--text); margin-bottom: 8px; }
+        .rp-drug-section { color: var(--text-muted); margin-bottom: 6px; line-height: 1.5; }
+        .rp-drug-label { font-weight: 700; color: var(--text); }
+        .rp-drug-warn { color: #f87171; border-left: 3px solid #f87171; padding-left: 8px; }
+        .rp-drug-src { font-size: 0.72rem; color: var(--text-dim); margin: 6px 0 0; text-align: right; }
+        .rp-drug-na { font-size: 0.82rem; color: var(--text-dim); margin: 4px 0; }
       `}</style>
         </div>
     );

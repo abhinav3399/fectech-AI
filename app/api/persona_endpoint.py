@@ -3,7 +3,7 @@
 One persona primitive powers the avatar's voice and in-character chat.
 """
 import base64
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, HTTPException
 from app.services.llm_service import llm_service
 from app.services.tts_service import tts_service
 from app.services.voice_clone_service import voice_clone_service, parse_data_url
@@ -64,13 +64,25 @@ async def persona_chat(payload: dict = Body(...)):
     history = (payload.get("history") or [])[-MAX_HISTORY:]
     if not text:
         return {"status": "error", "text": ""}
+    print(f"[CHAT] user message: {text}")
+    print(f"[CHAT] conversation ID: {payload.get('conversation_id') or 'client-session'}")
+    print("[CHAT] API endpoint: /api/v1/persona/chat")
+    print("[CHAT] selected intent: persona_chat")
     # Pull the most relevant memories from past conversations (fail-soft -> []).
     mems = episodic_memory.retrieve(user, text, limit=4)
     try:
         distress = float(payload.get("distress") or 0.0)
     except (TypeError, ValueError):
         distress = 0.0
-    reply = llm_service.chat_as_persona(text, persona=persona, user=user, history=history, memories=mems, distress=distress)
+    print(f"[CHAT] backend received: {text}")
+    try:
+        reply = llm_service.chat_as_persona(text, persona=persona, user=user, history=history, memories=mems, distress=distress)
+    except Exception as exc:
+        print(f"[CHAT] AI service error: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.") from exc
+    if not reply or not reply.strip():
+        raise HTTPException(status_code=503, detail="AI service returned an empty response. Please try again.")
+    print(f"[CHAT] AI response: {reply[:500]}")
     return {"status": "ok", "text": reply}
 
 
@@ -87,7 +99,11 @@ async def persona_opener(payload: dict = Body(...)):
         "feel, or a warm shared memory. Keep it to 1-2 short sentences. Do NOT mention that "
         "they were quiet or away, never say you are an AI, and never quiz or test them.]"
     )
-    reply = llm_service.chat_as_persona(directive, persona=persona, user=user, history=[], memories=[])
+    try:
+        reply = llm_service.chat_as_persona(directive, persona=persona, user=user, history=[], memories=[])
+    except Exception as exc:
+        print(f"[CHAT] opener AI service error: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.") from exc
     return {"status": "ok", "text": reply}
 
 
@@ -104,7 +120,11 @@ async def persona_reminisce(payload: dict = Body(...)):
         "test: do NOT ask 'do you remember?' and never quiz them. Keep it to 2-3 gentle sentences, "
         "only positive framing, and never say you are an AI. The memory: " + memory + "]"
     )
-    reply = llm_service.chat_as_persona(directive, persona=persona, user=user, history=[], memories=[])
+    try:
+        reply = llm_service.chat_as_persona(directive, persona=persona, user=user, history=[], memories=[])
+    except Exception as exc:
+        print(f"[CHAT] reminiscence AI service error: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.") from exc
     return {"status": "ok", "text": reply}
 
 

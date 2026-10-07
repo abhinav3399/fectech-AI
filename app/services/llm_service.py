@@ -1,4 +1,5 @@
 import os
+import requests
 from groq import Groq
 from app.core.config import settings
 
@@ -27,9 +28,6 @@ class LLMService:
     def __init__(self):
         self.api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
         print(f"DEBUG LLM: API Key Loaded? {bool(self.api_key)}")
-        if self.api_key:
-             print(f"DEBUG LLM: Key starts with {self.api_key[:4]}...")
-        
         self.client = None
         if self.api_key:
             try:
@@ -37,15 +35,29 @@ class LLMService:
                 print("DEBUG LLM: Groq Client Initialized")
             except Exception as e:
                 print(f"DEBUG LLM: Failed to init Groq: {e}")
+        print(f"DEBUG LLM: Ollama enabled? {settings.OLLAMA_ENABLED} ({settings.OLLAMA_URL}/{settings.OLLAMA_MODEL})")
+
+    def _ollama_chat(self, messages: list, temperature: float, max_tokens: int) -> str:
+        """Call the local Ollama OpenAI-compatible chat API without sending secrets."""
+        if not settings.OLLAMA_ENABLED:
+            return ""
+        response = requests.post(
+            f"{settings.OLLAMA_URL.rstrip('/')}/api/chat",
+            json={
+                "model": settings.OLLAMA_MODEL,
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": temperature, "num_predict": max_tokens},
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        return (response.json().get("message", {}).get("content") or "").strip()
         
     def generate_response(self, user_text: str, context: dict = None) -> str:
         """
         Generates a conversational response using Groq (Llama3).
         """
-        if not self.client:
-            print("DEBUG LLM: No Client, using Fallback")
-            return self._fallback_response(context)
-            
         try:
             print("DEBUG LLM: Sending request to Groq...")
             # Construct System Prompt
@@ -78,17 +90,19 @@ class LLMService:
                 {"role": "user", "content": f"Context: {context_str}\n\nUser: {user_text}"}
             ]
             
-            chat_completion = self.client.chat.completions.create(
-                messages=messages,
-                model="llama-3.1-8b-instant",
-                temperature=0.7,
-                max_tokens=100,
-            )
-            
-            return chat_completion.choices[0].message.content
+            if self.client:
+                chat_completion = self.client.chat.completions.create(
+                    messages=messages,
+                    model=settings.groq_llm_fallback_model,
+                    temperature=0.7,
+                    max_tokens=100,
+                )
+                return chat_completion.choices[0].message.content
+            return self._ollama_chat(messages, temperature=0.7, max_tokens=100)
             
         except Exception as e:
             print(f"LLM Error: {e}")
+            print(f"[CHAT] local/provider error: {type(e).__name__}: {e}")
             return self._fallback_response(context)
 
     def evaluate_conversation(self, transcript: list, persona: dict = None, user: dict = None) -> dict:
@@ -215,9 +229,6 @@ class LLMService:
         # First name only — repeating the full name every reply sounds robotic.
         raw_name = (user.get("name") or "").strip()
         user_name = raw_name.split()[0] if raw_name else "dear"
-
-        if not self.client:
-            return f"I'm right here with you, {user_name}."
 
         # (2) Conversation style — how chatty/detailed the companion is.
         style = (persona.get("style") or "balanced").strip().lower()
@@ -403,19 +414,35 @@ class LLMService:
 
         # (1) Smarter brain + (3) reliability: try the best model first, fall back
         # to a faster one, so a single hiccup never blanks the conversation.
-        for model in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
-            try:
-                completion = self.client.chat.completions.create(
-                    messages=messages,
-                    model=model,
-                    temperature=0.85,
-                    max_tokens=max_tokens,
-                )
-                reply = (completion.choices[0].message.content or "").strip()
-                if reply:
-                    return reply
-            except Exception as e:
-                print(f"Persona LLM error on {model}: {e}")
-        return f"I'm right here with you, {user_name}. Tell me what's on your mind?"
+        if self.client:
+            models = (
+                getattr(settings, "groq_llm_model", "llama-3.3-70b-versatile"),
+                getattr(settings, "groq_llm_fallback_model", "llama-3.1-8b-instant"),
+            )
+            for model in dict.fromkeys(models):
+                try:
+                    print(f"[CHAT] model: {model} (Groq)")
+                    completion = self.client.chat.completions.create(
+                        messages=messages,
+                        model=model,
+                        temperature=0.85,
+                        max_tokens=max_tokens,
+                    )
+                    reply = (completion.choices[0].message.content or "").strip()
+                    if reply:
+                        print(f"[CHAT] AI response: {reply[:500]}")
+                        return reply
+                except Exception as e:
+                    print(f"Persona Groq error on {model}: {e}")
+
+        try:
+            print(f"[CHAT] model: {settings.OLLAMA_MODEL} (Ollama)")
+            reply = self._ollama_chat(messages, temperature=0.85, max_tokens=max_tokens)
+            if reply:
+                print(f"[CHAT] AI response: {reply[:500]}")
+                return reply
+        except Exception as e:
+            print(f"Persona Ollama error: {type(e).__name__}: {e}")
+        raise RuntimeError("All configured chat providers failed")
 
 llm_service = LLMService()

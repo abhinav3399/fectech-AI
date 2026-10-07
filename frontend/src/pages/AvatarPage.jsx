@@ -6,11 +6,14 @@ import PhotoAvatar from '../components/PhotoAvatar';
 import TalkingPhoto from '../components/TalkingPhoto';
 import PersonaEditor from '../components/PersonaEditor';
 import { useAppState, setPersona, addTurn, addDistressEpisode } from '../lib/store';
+import { API_BASE } from '../lib/apiConfig';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { Capacitor } from '@capacitor/core';
+import { generateOfflineReply } from '../lib/offlineAi';
+import { DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, generateOllamaReply, isNativeCapacitor } from '../lib/ollama';
 import { attachAudio } from '../lib/audiolevel';
 import { startProsody, stopProsody, getProsody, resetProsodyWindow } from '../lib/prosody';
 import { scoreDistress } from '../lib/distress';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
 
 // Split a reply into sentence-ish chunks so TTS can play the first words fast and stream the
 // rest. Handles ., !, ?, and the Hindi danda (।); merges ultra-short fragments into the prior chunk.
@@ -27,7 +30,7 @@ function splitSentences(text) {
 }
 
 export default function AvatarPage() {
-    const { persona, profile, memories } = useAppState();
+    const { persona, profile, memories, transcript = [], settings = {} } = useAppState();
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [isSpeaking, setIsSpeaking] = useState(false);
@@ -69,7 +72,13 @@ export default function AvatarPage() {
     const speakIdRef = useRef(0);        // single-flight token so only the latest voice plays
     const realVoiceRef = useRef(realVoice); // freshest realVoice for async/timer-driven speak()
     const ttsAbortRef = useRef(null);    // abort the previous in-flight TTS so requests never pile up
+    const conversationIdRef = useRef(null);
     realVoiceRef.current = realVoice;
+    if (!conversationIdRef.current) {
+        conversationIdRef.current = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
     const distressRef = useRef(0);          // 0..1 live distress estimate sent to the persona brain
     const distressStreakRef = useRef(0);    // consecutive high-distress turns (hysteresis)
     const calmRef = useRef(false);          // currently in validation-therapy calm-mode
@@ -104,8 +113,11 @@ export default function AvatarPage() {
     useEffect(() => () => {
         flushSessionRef.current?.();
         callModeRef.current = false;
+        speakIdRef.current += 1;
+        try { ttsAbortRef.current?.abort(); } catch (e) { /* noop */ }
         try { recognitionRef.current?.stop(); } catch (e) { /* noop */ }
         window.speechSynthesis?.cancel();
+        if (Capacitor.isNativePlatform()) TextToSpeech.stop().catch(() => {});
     }, []);
 
     // Warm greeting from the persona on first open (localized). This also re-fires
@@ -122,8 +134,9 @@ export default function AvatarPage() {
                 : lang === 'hinglish'
                     ? `Arre ${u}! Main ${persona.name}. Tumse milke bahut khushi hui. Kaise ho?`
                     : `Hello ${u}, it's ${persona.name}. I'm so glad you're here. How are you feeling?`;
-            setMessages([{ role: 'bot', text: greet }]);
-            flushedCountRef.current = 0;       // new conversation array — reset dedup pointer
+            const saved = transcript.filter((turn) => turn?.text).slice(-40).map((turn) => ({ role: turn.role === 'user' ? 'user' : 'bot', text: turn.text }));
+            setMessages(saved.length ? saved : [{ role: 'bot', text: greet }]);
+            flushedCountRef.current = saved.length;
             lastActivityRef.current = Date.now(); // greeting counts as activity (don't nag)
             nudgeCountRef.current = 0;
             userSpokeRef.current = false;      // stay quiet until the user speaks first
@@ -180,6 +193,7 @@ export default function AvatarPage() {
             audioRef.current = null;
         }
         try { window.speechSynthesis?.cancel(); } catch (e) { /* noop */ }
+        if (Capacitor.isNativePlatform()) TextToSpeech.stop().catch(() => {});
         // Cancel any prior in-flight TTS so slow cloned syntheses never pile up on the worker.
         try { ttsAbortRef.current?.abort(); } catch (e) { /* noop */ }
         const controller = new AbortController();
@@ -206,20 +220,29 @@ export default function AvatarPage() {
             if (cloneId) reqBody.clone_voice_id = cloneId;
             else if (persona.voicePitch) reqBody.pitch = `${persona.voicePitch >= 0 ? '+' : ''}${persona.voicePitch}Hz`; // tune the fast voice
             if (rate) reqBody.rate = rate; // slower delivery in calm-mode (neural path only)
-            const r = await axios.post(`${API_BASE}/tts`, reqBody, { timeout: useClone ? 120000 : 30000, signal: controller.signal });
-            return r.data?.audio_base64 || null;
+            const r = await axios.post(`${API_BASE}/tts`, reqBody, { timeout: useClone ? 10000 : 4500, signal: controller.signal });
+            const audio = r.data?.audio_base64;
+            if (!audio) throw new Error('Backend returned no playable audio.');
+            return audio;
         };
-        // Play ONE clip; resolves when it finishes (or this line is superseded). Drives the mouth.
-        const playClip = (b64) => new Promise((resolve) => {
+        // Play ONE clip; surface decode/play errors so the native speech path can take over.
+        const playClip = (b64) => new Promise((resolve, reject) => {
             const audio = new Audio(`data:audio/mpeg;base64,${b64}`);
             audioRef.current = audio;
             attachAudio(audio); // feed the voice level so the 3D head / photo "talks"
             setIsSpeaking(true);
-            const done = () => resolve();
-            audio.onended = done;
-            audio.onerror = done;
-            controller.signal.addEventListener('abort', done, { once: true }); // unblock if superseded
-            audio.play().catch(() => { audioRef.current = null; done(); });
+            let settled = false;
+            const settle = (callback, value) => {
+                if (settled) return;
+                settled = true;
+                audio.onended = null;
+                audio.onerror = null;
+                callback(value);
+            };
+            audio.onended = () => settle(resolve);
+            audio.onerror = () => settle(reject, new Error('Backend audio could not play on this device.'));
+            controller.signal.addEventListener('abort', () => settle(resolve), { once: true });
+            audio.play().catch((error) => { audioRef.current = null; settle(reject, error); });
         });
 
         // Stream the reply sentence-by-sentence: play the first chunk as soon as it's synthesized
@@ -228,6 +251,7 @@ export default function AvatarPage() {
         const chunks = splitSentences(text);
         try {
             if (useClone) setVoicePrep(true);
+            if (Capacitor.isNativePlatform() && !navigator.onLine) throw new Error('Device is offline.');
             let nextAudio = synth(chunks[0]);
             for (let i = 0; i < chunks.length; i++) {
                 const b64 = await nextAudio;                  // wait for THIS chunk's audio
@@ -242,27 +266,40 @@ export default function AvatarPage() {
             return;
         } catch (e) {
             setVoicePrep(false);
-            // An intentional cancel (a newer line started) must NOT fall back to the robotic voice.
+            // An intentional cancel (a newer line started) must NOT fall back to local speech.
             if (axios.isCancel?.(e) || e.code === 'ERR_CANCELED' || e.name === 'CanceledError' || e.name === 'AbortError') return;
-            /* genuine network/TTS failure -> browser speech fallback below */
+            console.warn('[TTS] Backend speech unavailable; switching to device speech:', e.message);
         }
         if (speakIdRef.current !== myId) return; // superseded before the fallback
-        // Last-resort fallback: browser speech synthesis so the avatar always says something —
-        // set the language and pick a matching installed voice so Hindi is spoken in Hindi.
-        if (window.speechSynthesis) {
-            const u = new SpeechSynthesisUtterance(text);
-            u.lang = ttsLang;
-            const vs = window.speechSynthesis.getVoices();
-            const base = ttsLang.split('-')[0];
-            const match = vs.find((v) => v.lang === ttsLang) || vs.find((v) => v.lang?.startsWith(base));
-            if (match) u.voice = match;
+        // Prefer Android's installed system TTS; it does not need the API or WebView voice packs.
+        if (Capacitor.isNativePlatform()) {
             setIsSpeaking(true);
-            u.onend = afterSpeak;
-            u.onerror = afterSpeak;
-            window.speechSynthesis.speak(u);
-        } else {
+            try {
+                await TextToSpeech.speak({ text, lang: ttsLang, rate: 0.95, pitch: 1, volume: 1, queueStrategy: 0 });
+            } catch (nativeError) {
+                console.warn('[TTS] Android system speech failed:', nativeError?.message || nativeError);
+                setVoiceError('Phone speech is unavailable. Install or enable a text-to-speech voice in Android settings.');
+            }
             afterSpeak();
+            return;
         }
+        // Browser fallback: wait briefly for Web Speech voices to populate before speaking.
+        if (window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined') {
+            const speakInBrowser = () => new Promise((resolve, reject) => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = ttsLang;
+                const voices = window.speechSynthesis.getVoices();
+                const base = ttsLang.split('-')[0];
+                const match = voices.find((voice) => voice.lang === ttsLang) || voices.find((voice) => voice.lang?.startsWith(base));
+                if (match) utterance.voice = match;
+                utterance.onend = resolve;
+                utterance.onerror = (event) => reject(new Error(event.error || 'Browser speech failed.'));
+                setIsSpeaking(true);
+                window.speechSynthesis.speak(utterance);
+            });
+            try { await speakInBrowser(); } catch (browserError) { console.warn('[TTS] Browser speech failed:', browserError?.message || browserError); }
+        }
+        afterSpeak();
     };
 
     // Fetch a warm, in-character opener from the persona and speak it. The directive
@@ -319,6 +356,9 @@ export default function AvatarPage() {
         userSpokeRef.current = true; // the user has engaged -> proactive check-in now allowed
         nudgeCountRef.current = 0; // user responded -> allow future proactive check-ins
         const history = messagesRef.current.slice(-8);
+        console.info('[CHAT] user message:', q);
+        console.info('[CHAT] conversation ID:', conversationIdRef.current);
+        console.info('[CHAT] API endpoint:', `${API_BASE}/persona/chat`);
         setMessages((p) => [...p, { role: 'user', text: q }]);
         addTurn('user', q); // persist for the wellbeing evaluation
         setIsThinking(true);
@@ -338,14 +378,55 @@ export default function AvatarPage() {
             resetProsodyWindow();
         } catch (e) { /* never block the chat on the distress calc */ }
         try {
-            const r = await axios.post(`${API_BASE}/persona/chat`, {
+            const aiMode = settings.aiMode || 'auto';
+            const ollamaOptions = {
+                baseUrl: settings.ollamaUrl || DEFAULT_OLLAMA_URL,
+                model: settings.ollamaModel || DEFAULT_OLLAMA_MODEL,
+                text: q,
+                persona,
+                userName: firstName,
+                memories,
+                history,
+                distress: distressRef.current,
+            };
+            const askBackend = async (timeout) => (await axios.post(`${API_BASE}/persona/chat`, {
                 text: q,
                 persona: { name: persona.name, relationship: persona.relationship, personality: persona.personality, gender: persona.gender, age: persona.age, accent: persona.accent, language: persona.language, style: persona.style, carePlan: persona.carePlan },
                 user: { name: firstName },
+                conversation_id: conversationIdRef.current,
                 history,
                 distress: distressRef.current,
-            }, { timeout: 30000 });
-            const reply = r.data?.text || `I'm right here with you, ${firstName}.`;
+            }, { timeout })).data?.text?.trim();
+
+            let reply = '';
+            if (aiMode === 'offline') {
+                reply = await generateOfflineReply({ text: q, persona, memories, history });
+            } else if (aiMode === 'ollama') {
+                reply = await generateOllamaReply(ollamaOptions);
+            } else if (aiMode === 'online') {
+                reply = await askBackend(30000);
+            } else {
+                // On Android, first use a phone-local Ollama-compatible runtime. Native HTTP
+                // bypasses WebView CORS and localhost correctly resolves to the phone itself.
+                if (isNativeCapacitor()) {
+                    try { reply = await generateOllamaReply(ollamaOptions); }
+                    catch (localError) { console.info('[CHAT] phone-local Ollama unavailable; falling back:', localError.message); }
+                }
+                // The API's baked-in LAN address may be unreachable away from home Wi-Fi, so
+                // keep the auto-mode network attempt short and continue to local inference.
+                if (!reply && navigator.onLine) {
+                    try { reply = await askBackend(5000); }
+                    catch (networkError) { console.info('[CHAT] backend unavailable; falling back:', networkError.message); }
+                }
+                if (!reply) {
+                    try { reply = await generateOfflineReply({ text: q, persona, memories, history }); }
+                    catch (offlineError) {
+                        throw new Error(`Online AI is unavailable and the offline model could not start (${offlineError.message}). Connect once to download the offline model, then try again.`);
+                    }
+                }
+            }
+            if (!reply) throw new Error('AI service returned an empty response');
+            console.info('[CHAT] AI response:', reply);
             setMessages((p) => [...p, { role: 'bot', text: reply }]);
             addTurn('bot', reply);
             setIsThinking(false);
@@ -353,7 +434,17 @@ export default function AvatarPage() {
             // wait for the richer cloned voice. In calm-mode, slow the delivery for a soothing tone.
             speak(reply, { preferFast: callModeRef.current, rate: calmRef.current ? '-18%' : null }); // busyRef stays true until afterSpeak
         } catch (e) {
-            setMessages((p) => [...p, { role: 'bot', text: `I'm right here with you, ${firstName}.` }]);
+            const detail = e.response?.data?.detail;
+            const aiMode = settings.aiMode || 'auto';
+            const errorText = aiMode === 'ollama'
+                ? e.message || 'Could not connect to Ollama. Check its server address and that the selected model is installed.'
+                : aiMode === 'offline'
+                    ? `Offline AI could not start (${e.message}). Connect once to download the model, then try again.`
+                    : aiMode === 'online'
+                        ? (typeof detail === 'string' ? detail : 'Online AI service unavailable. Check the backend address or choose Auto for local fallback.')
+                        : (typeof detail === 'string' ? detail : e.message || 'AI service unavailable. Please try again.');
+            console.error('[CHAT] request failed:', e.message);
+            setMessages((p) => [...p, { role: 'bot', text: errorText }]);
             setIsThinking(false);
             busyRef.current = false;
             if (callModeRef.current) setTimeout(() => startListenRef.current?.(), 500);
@@ -458,6 +549,8 @@ export default function AvatarPage() {
 
     const endCall = () => {
         flushSession(); // save durable memories when a live call ends
+        speakIdRef.current += 1;
+        try { ttsAbortRef.current?.abort(); } catch (e) { /* noop */ }
         callModeRef.current = false;
         busyRef.current = false;
         setCallMode(false);
@@ -466,6 +559,7 @@ export default function AvatarPage() {
         try { stopProsody(); } catch (e) { /* noop */ }
         calmRef.current = false; distressRef.current = 0; distressStreakRef.current = 0;
         window.speechSynthesis?.cancel();
+        if (Capacitor.isNativePlatform()) TextToSpeech.stop().catch(() => {});
         if (audioRef.current) { try { audioRef.current.pause(); } catch (e) { /* noop */ } }
         setIsSpeaking(false);
     };
@@ -478,6 +572,7 @@ export default function AvatarPage() {
         try { audioRef.current?.pause(); } catch (e) { /* noop */ }
         if (audioRef.current) { audioRef.current.onended = null; audioRef.current.onerror = null; audioRef.current = null; }
         try { window.speechSynthesis?.cancel(); } catch (e) { /* noop */ }
+        if (Capacitor.isNativePlatform()) TextToSpeech.stop().catch(() => {});
         setIsSpeaking(false);
         busyRef.current = false;
         if (callModeRef.current) setTimeout(() => startListenRef.current?.(), 150);
@@ -548,12 +643,12 @@ export default function AvatarPage() {
             {/* Stage: the companion's face (real photo) or the 3D head */}
             <div className="av-stage">
                 {mode === '3d'
-                    ? <Avatar3D isSpeaking={isSpeaking} src={persona.modelUrl || '/model.glb'} />
+                    ? <Avatar3D isSpeaking={isSpeaking} src={persona.modelUrl} />
                     : mode === 'talk' && persona.faceImage
                         ? <TalkingPhoto src={persona.faceImage} isSpeaking={isSpeaking} name={persona.name} />
                         : persona.faceImage
                             ? <PhotoAvatar src={persona.faceImage} isSpeaking={isSpeaking} name={persona.name} />
-                            : <Avatar3D isSpeaking={isSpeaking} src={persona.modelUrl || '/model.glb'} />}
+                            : <Avatar3D isSpeaking={isSpeaking} src={persona.modelUrl} />}
 
                 {/* Live call banner */}
                 {callMode && (
@@ -636,6 +731,8 @@ export default function AvatarPage() {
                 <div className="av-privacy" title="Your conversations are processed privately">
                     <ShieldCheck size={14} /> Private connection · on-device
                 </div>
+
+                {/* Desktop tools (top-right absolute) */}
                 <div className="av-tools">
                     {!callMode && (
                         <button className="av-tool call" onClick={startCall} title="Talk hands-free, voice to voice">
@@ -670,6 +767,40 @@ export default function AvatarPage() {
                     )}
                     <button className="av-tool" onClick={() => setEditing(true)} title="Edit companion">
                         <Pencil size={16} /> Edit
+                    </button>
+                </div>
+
+                {/* Compact icon controls flank the enlarged mobile avatar. */}
+                <div className="av-mob-left" aria-label="Talk controls">
+                    {!callMode && (
+                        <button className="av-mob-tool call" onClick={startCall} title="Auto-talk" aria-label="Auto-talk">
+                            <Phone size={18} />
+                        </button>
+                    )}
+                    <button className="av-mob-tool" onClick={startReminisce} title="Remember when" aria-label="Remember when">
+                        <Images size={18} />
+                    </button>
+                    <button className={`av-mob-tool ${captionsOn ? 'on' : ''}`} onClick={toggleCaptions} title="Captions" aria-label="Captions" aria-pressed={captionsOn}>
+                        <Captions size={18} />
+                    </button>
+                </div>
+
+                <div className="av-mob-ring">
+                    {persona.faceImage
+                        ? <img src={persona.faceImage} alt={persona.name} />
+                        : <span className="av-mob-initial">{(persona.name || '?').charAt(0)}</span>}
+                    <span className="av-mob-online" />
+                </div>
+
+                <div className="av-mob-right" aria-label="Companion controls">
+                    <button className="av-mob-tool" onClick={() => setEditing(true)} title="Photo" aria-label="Photo">
+                        <User size={18} />
+                    </button>
+                    <button className="av-mob-tool" onClick={() => setEditing(true)} title="Edit" aria-label="Edit">
+                        <Pencil size={18} />
+                    </button>
+                    <button className="av-mob-tool" onClick={() => setEditing(true)} title="Personality" aria-label="Personality">
+                        <Volume2 size={18} />
                     </button>
                 </div>
             </div>
@@ -730,7 +861,7 @@ export default function AvatarPage() {
                 var(--bg);
             color: var(--text);
         }
-        .av-stage { flex: 1; position: relative; min-width: 0; }
+        .av-stage { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; overflow: hidden; }
         .av-caption { position: absolute; bottom: var(--s-8); left: 0; right: 0; text-align: center; pointer-events: none; }
         .av-name { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: -0.01em; color: var(--text); text-shadow: 0 2px 14px rgba(0,0,0,0.18); }
         .av-rel {
@@ -783,6 +914,85 @@ export default function AvatarPage() {
         .av-tool:hover { background: var(--surface-3); border-color: var(--border-strong); transform: translateY(-2px); box-shadow: var(--shadow-md); }
         .av-tool.call { border-color: rgba(52,211,153,0.5); background: rgba(52,211,153,0.16); color: #6ee7b7; box-shadow: 0 8px 26px rgba(52,211,153,0.22); }
         .av-tool.call:hover { background: rgba(52,211,153,0.26); }
+
+        /* ── Mobile-only elements: hidden on desktop ── */
+        .av-mob-left, .av-mob-ring, .av-mob-right { display: none; }
+
+        @media (max-width: 640px) {
+            /* Icon-only controls keep both columns narrow around the avatar. */
+            .av-mob-left,
+            .av-mob-right {
+                grid-row: 1 !important;
+                display: flex !important;
+                flex-direction: column;
+                align-items: center;
+                justify-self: center;
+                align-self: start;
+                width: 44px;
+                min-width: 44px;
+                gap: 6px;
+            }
+            .av-mob-left { grid-column: 1 !important; }
+            .av-mob-right { grid-column: 3 !important; }
+            /* Larger portrait stays centered between compact icon controls. */
+            .av-mob-ring {
+                grid-column: 2 !important;
+                grid-row: 1 !important;
+                display: flex !important;
+                position: relative;
+                align-self: start;
+                justify-self: center;
+                width: min(40vw, 128px); height: min(40vw, 128px); border-radius: 50%;
+                border: 3px solid #7c3aed;
+                box-shadow: 0 0 0 4px rgba(124,58,237,0.18), 0 8px 28px rgba(100,80,200,0.2);
+                overflow: visible;
+                align-items: center; justify-content: center;
+                background: rgba(124,58,237,0.08);
+                flex-shrink: 0;
+            }
+            .av-mob-ring img {
+                width: 100%; height: 100%; border-radius: 50%;
+                object-fit: cover; object-position: center top;
+            }
+            .av-mob-initial {
+                font-size: 3.4rem; font-weight: 900; color: #7c3aed;
+            }
+            .av-mob-online {
+                position: absolute; bottom: 7px; right: 7px;
+                width: 20px; height: 20px; border-radius: 50%;
+                background: #22c55e; border: 3px solid #fff;
+                box-shadow: 0 0 0 2px rgba(34,197,94,0.35);
+            }
+            /* Compact square icon buttons; labels remain available to assistive tech. */
+            .av-mob-tool {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 40px;
+                height: 40px;
+                min-height: 40px !important;
+                padding: 0;
+                border-radius: 13px;
+                border: 1.5px solid rgba(124,58,237,0.15);
+                background: #fff;
+                color: #475569;
+                font-family: inherit;
+                cursor: pointer;
+                box-shadow: 0 2px 8px rgba(100,80,200,0.06);
+                -webkit-tap-highlight-color: transparent;
+            }
+            .av-mob-tool svg { width: 18px; height: 18px; flex: 0 0 18px; }
+            .av-mob-tool.call {
+                border-color: rgba(34,197,94,0.4);
+                background: rgba(34,197,94,0.08);
+                color: #16a34a;
+            }
+            .av-mob-tool.on {
+                background: rgba(124,58,237,0.1);
+                border-color: rgba(124,58,237,0.3);
+                color: #7c3aed;
+            }
+        }
 
         .av-call {
             position: absolute; top: var(--s-5); left: 50%; transform: translateX(-50%);
@@ -853,10 +1063,15 @@ export default function AvatarPage() {
         }
         @media (max-width: 820px) {
             .av { flex-direction: column; }
-            .av-chat { width: 100%; height: 50%; border-left: none; border-top: 1px solid var(--border); }
+            .av-stage { flex: 0 0 56%; min-height: 320px; }
+            .av-chat { width: 100%; height: 44%; min-height: 0; border-left: none; border-top: 1px solid var(--border); }
             /* Stacked layout: lift the input above the "Call family" safety button so it's never covered. */
-            .av-input { padding-bottom: calc(var(--s-4) + 76px); }
+            .av-input { padding-bottom: var(--s-4); }
             .av-tools { max-width: calc(100% - var(--s-10)); }
+            .av-caption { bottom: var(--s-4); }
+            .av-caption.with-controls { bottom: 104px; }
+            .av-name { font-size: var(--fs-xl); }
+            .av-cc { bottom: 116px; max-width: 92%; font-size: var(--fs-lg); }
         }
         .av-messages { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-5); display: flex; flex-direction: column; justify-content: flex-end; gap: var(--s-3); }
         .av-bubble {
@@ -930,6 +1145,314 @@ export default function AvatarPage() {
             transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
         }
         .av-modal-head button:hover { background: var(--surface-3); color: var(--text); }
+
+        /* ══════════════ MOBILE LAYOUT ══════════════════════════════════════════
+           Completely restructures the AvatarPage for phones to match the
+           reference design:
+             ┌─────────────────────────────────────────┐
+             │  [Auto-talk]  ●AVATAR●  [Photo]         │
+             │  [Remember…]             [Edit]          │
+             │  [Captions]              [Personality]   │
+             │            Name · Status                 │
+             │     ──── chat messages ────              │
+             │     suggestion pills                     │
+             │ ☎  Talk to Ajay…               ➤        │
+             └─────────────────────────────────────────┘
+           ══════════════════════════════════════════════════════════════════════ */
+        @media (max-width: 640px) {
+            /* Root container: fit the viewport between the fixed app bars. */
+            .av {
+                flex-direction: column !important;
+                background: transparent !important;
+                overflow: hidden !important;
+                height: 100% !important;
+            }
+
+            /* Stack the avatar, identity and caption before the wrapped controls. */
+            .av-stage {
+                flex: 0 0 auto !important;
+                position: relative !important;
+                min-height: 0 !important;
+                overflow: visible !important;
+                display: grid !important;
+                grid-template-columns: 44px minmax(0, 1fr) 44px !important;
+                grid-template-rows: auto auto auto !important;
+                align-items: center !important;
+                align-content: start !important;
+                padding: 12px 12px 10px !important;
+                gap: 8px 6px !important;
+            }
+
+            /* Hide the 3D canvas / full-stage avatar on mobile — we show a pill photo */
+            .av-stage > div:first-child,
+            .av-stage canvas,
+            .av-stage > div.av-photo { display: none !important; }
+
+            /* The "Photo" mobile avatar circle — we create it via pseudo + tools reuse */
+            /* We'll overlay the actual avatar inside av-stage center using a mobile-circle */
+
+            /* Hide desktop-only elements in stage */
+            .av-privacy { display: none !important; }
+            .av-call { top: auto !important; bottom: 4px !important; left: 50% !important; transform: translateX(-50%) !important; width: max-content !important; }
+            .av-controls { position: static !important; transform: none !important; justify-content: center !important; width: 100% !important; background: transparent !important; border: none !important; box-shadow: none !important; backdrop-filter: none !important; padding: 0 !important; }
+            .av-bargein { display: none !important; }
+            .av-voice-err { bottom: 4px !important; }
+
+            /* Caption block — repositioned below the 3-col section */
+            .av-caption {
+                grid-column: 1 / -1 !important;
+                grid-row: 2 !important;
+                position: static !important;
+                width: 100% !important;
+                text-align: center !important;
+                pointer-events: auto !important;
+                padding: 2px 0 0 !important;
+            }
+            .av-name { font-size: 1.3rem !important; font-weight: 800 !important; color: #f8fafc !important; text-shadow: 0 2px 12px rgba(0,0,0,0.72) !important; }
+            .av-rel  { font-size: 0.82rem !important; color: #64748b !important; background: none !important; -webkit-text-fill-color: initial !important; color: #64748b !important; }
+            .av-state {
+                font-size: 0.7rem !important; letter-spacing: 0.1em !important;
+                border: 1.5px solid rgba(124,58,237,0.35) !important;
+                background: rgba(124,58,237,0.06) !important;
+                color: #7c3aed !important; margin-top: 6px !important;
+                display: inline-flex !important; align-items: center !important; gap: 6px !important;
+            }
+            /* Mic wave bars inside status */
+            .av-waves span { background: #7c3aed !important; }
+
+            /* ── Reposition av-tools into a left/right column layout ── */
+            /* We split tools visually: Auto-talk/Remember/Captions go LEFT of avatar,
+               Photo/Edit/Personality go RIGHT of avatar.
+               We use CSS order to achieve this by making av-tools a grid. */
+            .av-tools {
+                position: static !important;
+                display: contents !important;   /* let children participate in stage grid */
+                max-width: none !important;
+            }
+
+            /* Each av-tool becomes a rounded pill button */
+            .av-tool {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                min-height: 44px !important;
+                justify-content: center !important;
+                padding: 8px !important;
+                border-radius: 12px !important;
+                white-space: normal !important;
+                text-align: center !important;
+                line-height: 1.2 !important;
+                font-size: 0.72rem !important;
+                border: 1.5px solid rgba(124,58,237,0.15) !important;
+                background: #fff !important;
+                color: #475569 !important;
+                box-shadow: 0 2px 8px rgba(100,80,200,0.06) !important;
+                display: flex !important;
+                align-items: center !important;
+                gap: 5px !important;
+                backdrop-filter: none !important;
+            }
+            .av-tool svg { flex: 0 0 16px !important; }
+            .av-tool:hover { transform: none !important; }
+
+            /* Call/Auto-talk button stays green */
+            .av-tool.call {
+                border-color: rgba(34,197,94,0.4) !important;
+                background: rgba(34,197,94,0.08) !important;
+                color: #16a34a !important;
+            }
+            /* Active toggle */
+            .av-tool.on {
+                background: rgba(124,58,237,0.1) !important;
+                border-color: rgba(124,58,237,0.3) !important;
+                color: #7c3aed !important;
+            }
+            /* Live-call controls — span all cols, centered */
+            .av-call {
+                grid-column: 1 / -1 !important; grid-row: 1 !important;
+                position: static !important; transform: none !important;
+                justify-self: center !important; margin-top: 4px !important;
+            }
+
+            /* We need a mobile avatar circle in the stage center.
+               We display it via a ::before pseudo on av-stage (the grid center cell). */
+            .av-stage::after {
+                content: '';
+                display: none !important; /* placeholder — actual avatar is shown via av-mob-ring */
+            }
+            .av-controls {
+                grid-column: 1 / -1 !important;
+                position: static !important; transform: none !important;
+                background: transparent !important; border: none !important;
+                box-shadow: none !important; backdrop-filter: none !important;
+                padding: 4px 0 !important; justify-content: center !important;
+            }
+            .av-voice-err { position: absolute !important; bottom: 2px !important; left: 50% !important; transform: translateX(-50%) !important; }
+            .av-privacy, .av-bargein, .av-tools { display: none !important; }
+
+            /* ── Chat section ── */
+            /* ── Chat panel ── */
+            .av-chat {
+                width: 100% !important;
+                height: auto !important;
+                flex: 1 1 auto !important;
+                min-height: 0 !important;
+                border-left: none !important;
+                border-top: none !important;
+                background: transparent !important;
+                backdrop-filter: none !important;
+                display: flex !important;
+                flex-direction: column !important;
+                overflow: hidden !important;
+                width: 100% !important; height: auto !important;
+                flex: 1 1 auto !important; min-height: 0 !important;
+                border-left: none !important; border-top: none !important;
+                background: transparent !important; backdrop-filter: none !important;
+                display: flex !important; flex-direction: column !important; overflow: hidden !important;
+            }
+
+            .av-messages {
+                flex: 1 !important;
+                padding: 10px 14px !important;
+                gap: 10px !important;
+                justify-content: flex-start !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                flex: 1 !important; padding: 10px 14px !important;
+                gap: 10px !important; justify-content: flex-start !important;
+                overflow-y: auto !important; -webkit-overflow-scrolling: touch !important;
+            }
+
+            /* Bot messages → white card like reference */
+            /* Bot messages → white card */
+            .av-bubble.bot {
+                background: #fff !important;
+                border: 1px solid rgba(124,58,237,0.08) !important;
+                border-radius: 16px !important;
+                border-top-left-radius: 4px !important;
+                border-radius: 16px !important; border-top-left-radius: 4px !important;
+                box-shadow: 0 2px 10px rgba(100,80,200,0.06) !important;
+                color: #0f0c2e !important;
+                font-size: 0.9rem !important;
+                max-width: 92% !important;
+                padding: 14px 16px !important;
+                color: #0f0c2e !important; font-size: 0.9rem !important;
+                max-width: 92% !important; padding: 14px 16px !important;
+                display: flex !important; flex-direction: column !important; gap: 8px !important;
+            }
+            /* User messages → purple tint */
+            .av-bubble.user {
+                background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(79,70,229,0.12)) !important;
+                border: 1px solid rgba(124,58,237,0.2) !important;
+                border-radius: 16px !important;
+                border-top-right-radius: 4px !important;
+                color: #0f0c2e !important;
+                font-size: 0.9rem !important;
+                max-width: 85% !important;
+                border: 1px solid rgba(124,58,237,0.18) !important;
+                border-radius: 16px !important; border-top-right-radius: 4px !important;
+                color: #0f0c2e !important; font-size: 0.9rem !important; max-width: 85% !important;
+            }
+
+            /* "Say it again" button */
+            /* "Say it again" */
+            .av-again {
+                background: rgba(124,58,237,0.06) !important;
+                border: 1.5px solid rgba(124,58,237,0.2) !important;
+                color: #7c3aed !important;
+                border-radius: 999px !important;
+                font-size: 0.78rem !important;
+                color: #7c3aed !important; border-radius: 999px !important; font-size: 0.78rem !important;
+            }
+
+            /* Compact prompt chips leave more room for the conversation on phones. */
+            .av-suggestions {
+                padding: 2px 12px 6px !important;
+                gap: 6px !important;
+                flex-wrap: wrap !important;
+            }
+            .av-suggestions button {
+                min-height: 34px !important;
+                padding: 5px 10px !important;
+                border: 1.5px solid rgba(124,58,237,0.18) !important;
+                border-radius: 999px !important;
+                background: rgba(124,58,237,0.07) !important;
+                color: #475569 !important;
+                font-size: 0.74rem !important;
+                font-weight: 600 !important;
+                line-height: 1.3 !important;
+                white-space: nowrap;
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 6px !important;
+                transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+            }
+            .av-suggestions button:hover:not(:disabled) {
+                background: rgba(124,58,237,0.13) !important;
+                color: #0f0c2e !important;
+                transform: none !important;
+                box-shadow: none !important;
+            }
+
+            /* ── Bottom input bar ── */
+            .av-input {
+                padding: 10px 12px 14px 76px !important;
+                gap: 8px !important;
+                border-top: 1px solid rgba(124,58,237,0.08) !important;
+                background: rgba(255,255,255,0.9) !important;
+                align-items: center !important;
+                display: flex !important;
+                background: rgba(255,255,255,0.95) !important;
+                align-items: center !important; display: flex !important;
+            }
+
+            /* The phone FAB replaces the normal send button on the left — using the
+               av-input's first child (the input) + second child (send btn).
+               We inject a call button via the existing av-tool.call in a sibling, but
+               to keep it clean we style the input row here. */
+            .av-input input {
+                background: rgba(124,58,237,0.05) !important;
+                border: 1.5px solid rgba(124,58,237,0.12) !important;
+                border-radius: 999px !important;
+                padding: 12px 16px !important;
+                font-size: 0.88rem !important;
+                color: #0f0c2e !important;
+                flex: 1 !important;
+                border-radius: 999px !important; padding: 12px 16px !important;
+                font-size: 0.88rem !important; color: #0f0c2e !important; flex: 1 !important;
+            }
+            .av-input input::placeholder { color: #94a3b8 !important; }
+            .av-input input:focus { border-color: #7c3aed !important; }
+
+            /* Send button → purple rounded square */
+            .av-input input:focus { border-color: #7c3aed !important; box-shadow: none !important; }
+            .av-input button {
+                width: 44px !important; height: 44px !important;
+                min-height: 44px !important;
+                width: 44px !important; height: 44px !important; min-height: 44px !important;
+                border-radius: 14px !important;
+                background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+                box-shadow: 0 4px 14px rgba(124,58,237,0.35) !important;
+                box-shadow: 0 4px 14px rgba(124,58,237,0.35) !important; opacity: 1 !important;
+            }
+
+            /* Captions stay readable but never cover the avatar or the chat composer. */
+            .av-cc {
+                grid-column: 1 / -1 !important;
+                grid-row: 3 !important;
+                position: static !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                max-height: min(96px, 16vh) !important;
+                margin: 0 !important;
+                padding: 10px 14px !important;
+                overflow-y: auto !important;
+                transform: none !important;
+                font-size: 0.9rem !important;
+                line-height: 1.4 !important;
+                border-radius: 16px !important;
+            }
+        }
       `}</style>
         </div>
     );

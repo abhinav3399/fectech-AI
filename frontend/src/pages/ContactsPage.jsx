@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { Phone, Plus, Star, Pencil, Trash2, X, UserPlus } from 'lucide-react';
 import { useAppState, setEmergencyContacts } from '../lib/store';
 import { toast, confirmAction } from '../components/Feedback';
@@ -65,7 +66,15 @@ export default function ContactsPage() {
                 ) : (
                     <div className="cp-grid">
                         {contacts.map((c) => (
-                            <div key={c.id} className={`cp-card ${c.primary ? 'primary' : ''}`}>
+                            <motion.article
+                                key={c.id}
+                                layout
+                                initial={{ opacity: 0, y: 12 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                whileHover={{ y: -2 }}
+                                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                                className={`cp-card ${c.primary ? 'primary' : ''}`}
+                            >
                                 <div className="cp-card-top">
                                     <div className="cp-avatar">{(c.name || '?').trim().charAt(0).toUpperCase()}</div>
                                     <div className="cp-info">
@@ -82,7 +91,7 @@ export default function ContactsPage() {
                                     <button className="cp-ic" onClick={() => openEdit(c)} title="Edit"><Pencil size={16} /></button>
                                     <button className="cp-ic danger" onClick={() => remove(c)} title="Remove"><Trash2 size={16} /></button>
                                 </div>
-                            </div>
+                            </motion.article>
                         ))}
                     </div>
                 )}

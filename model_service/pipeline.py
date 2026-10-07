@@ -23,6 +23,11 @@ def generate(image_path: str, out_dir: str, task_id: str, on_progress=None):
         from . import meshgen  # raises NotImplementedError until you wire a model
         return meshgen.run(image_path, glb, stl, on_progress=prog)
 
+    # --- Optional DECA: official FLAME-based reconstruction in an isolated env. ---
+    if cfg.PIPELINE == "DECA":
+        from . import deca_runner
+        return deca_runner.run(image_path, glb, stl, on_progress=prog)
+
     # --- Pipeline C (default): real 3D FACE MESH (MediaPipe, CPU). ---
     if cfg.PIPELINE == "C":
         try:
