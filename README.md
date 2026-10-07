@@ -38,7 +38,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Frontend Setup (React)
+### 2. Frontend Setup (React)
 Install the node modules.
 
 ```bash
@@ -47,7 +47,7 @@ npm install
 cd ..
 ```
 
-### 4. Environment Configuration
+### 3. Environment Configuration
 Create a `.env` file in the root directory by copying the example.
 ```bash
 cp .env.example .env
@@ -65,7 +65,7 @@ GROQ_API_KEY=gsk_your_groq_api_key_here
 
 ```
 
-### 5. Important: Embeddings & Qdrant Data
+### 4. Important: Embeddings & Qdrant Data
 **Why is the Qdrant API Key provided?**
 The project comes connected to a cloud Qdrant instance pre-loaded with **VoxCeleb** embeddings. This allows you to test the retrieval and recognition features immediately without spending hours enrolling data.
 
