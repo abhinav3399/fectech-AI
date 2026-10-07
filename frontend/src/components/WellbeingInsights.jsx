@@ -2,16 +2,15 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { Activity, Sparkles, AlertCircle, Lightbulb, TrendingUp } from 'lucide-react';
 import { useAppState, addInsight } from '../lib/store';
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
+import { API_BASE } from '../lib/apiConfig';
 
 const MOOD = {
-    positive: { label: 'Positive', color: '#4ade80', score: 4 },
-    neutral: { label: 'Neutral', color: '#60a5fa', score: 3 },
-    low: { label: 'Low', color: '#fbbf24', score: 2 },
-    anxious: { label: 'Anxious', color: '#f87171', score: 1 },
+    positive: { label: 'Positive', color: '#34d399', score: 4 }, // success
+    neutral: { label: 'Neutral', color: '#22d3ee', score: 3 },   // accent-cyan
+    low: { label: 'Low', color: '#fbbf24', score: 2 },           // warning
+    anxious: { label: 'Anxious', color: '#f87171', score: 1 },   // danger
 };
-const ENGAGE = { high: '#4ade80', medium: '#60a5fa', low: '#fbbf24' };
+const ENGAGE = { high: '#34d399', medium: '#22d3ee', low: '#fbbf24' };
 
 export default function WellbeingInsights() {
     const { transcript, persona, profile, insightsHistory } = useAppState();
@@ -111,28 +110,64 @@ export default function WellbeingInsights() {
             )}
 
             <style>{`
-        .wi { background: rgba(30,41,59,0.55); border: 1px solid rgba(255,255,255,0.09); border-radius: 18px; padding: 22px; margin-top: 28px; }
-        .wi-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-        .wi-title { display: flex; align-items: center; gap: 8px; font-size: 1.15rem; font-weight: 700; }
-        .wi-btn { display: flex; align-items: center; gap: 7px; background: linear-gradient(135deg,#7c3aed,#2563eb); color: #fff; border: none; padding: 9px 16px; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+        .wi {
+            background: var(--glass); border: 1px solid var(--border); border-radius: var(--r-lg);
+            padding: var(--s-6); margin-top: var(--s-8);
+            box-shadow: var(--shadow-md); backdrop-filter: blur(14px);
+        }
+        .wi-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+        .wi-title { display: flex; align-items: center; gap: var(--s-2); font-size: var(--fs-lg); font-weight: 800; letter-spacing: -0.01em; }
+        .wi-btn {
+            display: inline-flex; align-items: center; gap: var(--s-2);
+            background: var(--grad-brand); color: var(--text-on-brand); border: none;
+            padding: 11px 18px; border-radius: var(--r-md); font-weight: 700; cursor: pointer;
+            font-size: var(--fs-sm); font-family: inherit; box-shadow: var(--glow-brand);
+            transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+        }
+        .wi-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 14px 44px rgba(124, 58, 237, 0.5); }
+        .wi-btn:active:not(:disabled) { transform: translateY(1px); }
         .wi-btn:disabled { opacity: 0.5; cursor: default; }
-        .wi-sub { color: #94a3b8; font-size: 0.88rem; margin: 8px 0 0; line-height: 1.5; }
-        .wi-error { margin-top: 12px; color: #fca5a5; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding: 10px 14px; border-radius: 10px; font-size: 0.85rem; }
-        .wi-body { margin-top: 16px; }
-        .wi-pills { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-        .wi-pill { border: 1px solid; padding: 5px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; background: rgba(255,255,255,0.03); }
-        .wi-summary { color: #e2e8f0; line-height: 1.6; font-size: 0.95rem; margin: 0 0 16px; }
-        .wi-section { margin-bottom: 14px; }
-        .wi-label { font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
-        .wi-label.wi-warn { color: #fbbf24; }
-        .wi-label.wi-tip { color: #4ade80; }
-        .wi-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-        .wi-chip { background: rgba(124,58,237,0.15); border: 1px solid rgba(124,58,237,0.3); color: #c4b5fd; padding: 5px 12px; border-radius: 14px; font-size: 0.8rem; }
-        .wi-list { margin: 0; padding-left: 18px; color: #cbd5e1; line-height: 1.6; font-size: 0.9rem; }
-        .wi-list li { margin-bottom: 4px; }
-        .wi-trend { display: flex; align-items: flex-end; gap: 6px; height: 56px; padding: 4px 0; }
-        .wi-bar-wrap { flex: 1; max-width: 26px; height: 100%; display: flex; align-items: flex-end; background: rgba(255,255,255,0.04); border-radius: 4px; }
-        .wi-bar { width: 100%; border-radius: 4px; min-height: 6px; transition: height .3s; }
+        .wi-sub { color: var(--text-muted); font-size: var(--fs-sm); margin: var(--s-2) 0 0; line-height: 1.6; }
+        .wi-error {
+            margin-top: var(--s-3); color: var(--danger);
+            background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3);
+            padding: 12px 16px; border-radius: var(--r-md); font-size: var(--fs-sm);
+        }
+        .wi-body { margin-top: var(--s-4); animation: ui-fade-up 0.4s var(--ease) both; }
+        .wi-pills { display: flex; gap: var(--s-3); flex-wrap: wrap; margin-bottom: var(--s-4); }
+        .wi-pill {
+            border: 1px solid; padding: 6px 16px; border-radius: var(--r-pill);
+            font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.02em;
+            background: var(--surface-1); backdrop-filter: blur(8px);
+        }
+        .wi-summary { color: var(--text); line-height: 1.65; font-size: var(--fs-md); margin: 0 0 var(--s-4); }
+        .wi-section { margin-bottom: var(--s-4); }
+        .wi-label {
+            font-size: var(--fs-xs); font-weight: 700; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: var(--s-2);
+            display: flex; align-items: center; gap: var(--s-2);
+        }
+        .wi-label.wi-warn { color: var(--warning); }
+        .wi-label.wi-tip { color: var(--success); }
+        .wi-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+        .wi-chip {
+            display: inline-flex; align-items: center;
+            background: rgba(139, 92, 246, 0.14); border: 1px solid rgba(139, 92, 246, 0.32); color: #ddd6fe;
+            padding: 6px 14px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600;
+            transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+        }
+        .wi-chip:hover { background: rgba(139, 92, 246, 0.26); color: #fff; }
+        .wi-list { margin: 0; padding-left: var(--s-5); color: var(--text-muted); line-height: 1.65; font-size: var(--fs-sm); }
+        .wi-list li { margin-bottom: var(--s-1); }
+        .wi-trend {
+            display: flex; align-items: flex-end; gap: var(--s-2); height: 64px;
+            padding: var(--s-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-md);
+        }
+        .wi-bar-wrap {
+            flex: 1; max-width: 28px; height: 100%; display: flex; align-items: flex-end;
+            background: var(--surface-2); border-radius: var(--r-sm); overflow: hidden;
+        }
+        .wi-bar { width: 100%; border-radius: var(--r-sm); min-height: 6px; transition: height var(--dur) var(--ease); }
       `}</style>
         </div>
     );

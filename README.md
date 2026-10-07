@@ -15,7 +15,14 @@ Before running the project, ensure you have the following installed:
 
 ## 🛠️ Installation & Setup
 
-### 1. Backend Setup (FastAPI)
+### 1. clone the Repository
+
+```bash
+git clone https://github.com/abhinav3399/fectech-AI.git
+cd fectech-AI
+```
+
+### 2. Backend Setup (FastAPI)
 Create a virtual environment and install dependencies.
 
 ```bash

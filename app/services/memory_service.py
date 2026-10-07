@@ -103,6 +103,7 @@ class MemoryService:
             
             # ... Fuzzy Search Logic ...
             query = text_query.lower()
+            query_words = [word for word in query.split() if len(word) > 2]
             candidates = []
             max_score = 0.0
             
@@ -117,9 +118,8 @@ class MemoryService:
                 if relation and relation in query: score += 0.8
                 if notes and query in notes: score += 0.5
                 
-                query_words = query.split()
                 for word in query_words:
-                    if len(word) > 2:
+                    if name and abs(len(word) - len(name)) <= max(3, len(name) // 2):
                         matcher = difflib.SequenceMatcher(None, word, name)
                         if matcher.ratio() > 0.7: score += 0.8
                             

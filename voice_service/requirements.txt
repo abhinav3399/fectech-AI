@@ -1,0 +1,12 @@
+# Local voice-cloning worker. Install into voice_service/.venv (its OWN venv) so
+# these heavy, version-pinned deps never disturb the main app's environment:
+#   py -3.13 -m venv voice_service/.venv
+#   voice_service/.venv/Scripts/python -m pip install -r voice_service/requirements.txt
+coqui-tts>=0.27.5      # XTTS-v2: local, CPU, zero-shot multilingual voice cloning
+torch>=2.6
+torchaudio>=2.6
+transformers>=4.44,<5  # 5.x dropped isin_mps_friendly, which coqui-tts 0.27.5 imports
+fastapi
+uvicorn[standard]
+imageio-ffmpeg         # bundled static ffmpeg (decode webm/mp3 -> wav, encode -> mp3)
+soundfile

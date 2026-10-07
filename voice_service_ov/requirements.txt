@@ -1,0 +1,42 @@
+# OpenVoice v2 fast-clone worker (MeloTTS base + tone-color converter). ~4s/sentence on CPU,
+# English (incl. Indian accent). Install into voice_service_ov/.venv — its OWN venv:
+#   py -3.13 -m venv voice_service_ov/.venv
+#   voice_service_ov/.venv/Scripts/python -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+#   voice_service_ov/.venv/Scripts/python -m pip install -r voice_service_ov/requirements.txt
+#   voice_service_ov/.venv/Scripts/python -m pip install --no-deps git+https://github.com/myshell-ai/MeloTTS.git
+#   voice_service_ov/.venv/Scripts/python -c "import nltk;[nltk.download(p) for p in ['averaged_perceptron_tagger_eng','averaged_perceptron_tagger','cmudict','punkt','punkt_tab']]"
+# (the OpenVoice converter checkpoint + MeloTTS base model auto-download on first run.)
+torch==2.8.0            # <2.9: keeps torchaudio's built-in decoders (>=2.9 forces torchcodec), CPU
+torchaudio==2.8.0
+openvoice-cli           # tone-color converter + ToneColorConverter API (auto-downloads ckpt)
+# --- MeloTTS base-voice deps (MeloTTS itself is installed separately via git --no-deps) ---
+pyopenjtalk-plus        # cp313 wheel; provides the `pyopenjtalk` import (upstream has no 3.13 wheel)
+jamo                    # MeloTTS Korean G2P import (loaded even for English)
+mecab-python3
+unidic-lite
+fugashi
+pykakasi
+jieba
+cn2an
+pypinyin
+txtsplit
+cached-path
+g2p-en
+num2words
+inflect
+eng_to_ipa
+unidecode
+anyascii
+gruut
+nltk
+transformers
+librosa
+soundfile
+pydub
+loguru
+tqdm
+# --- the worker itself ---
+fastapi
+uvicorn[standard]
+imageio-ffmpeg
+numpy

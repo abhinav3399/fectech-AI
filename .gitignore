@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 frontend/.env
+frontend/.env.android
 # keep the template
 !.env.example
 
@@ -14,10 +15,24 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# --- Local voice-cloning workers (runtime artifacts; code is tracked) ---
+voice_service/voices/
+voice_service/_*.log
+voice_service_ov/voices/
+voice_service_ov/_*.log
+
+# --- Local database (accounts + synced state) ---
+*.db
+*.db-journal
+
 # --- Node / frontend ---
 node_modules/
 frontend/node_modules/
 frontend/dist/
+build/
+dist/
+release/
+desktop/runtime/
 npm-debug.log*
 
 # --- Runtime / generated data ---
@@ -36,3 +51,4 @@ yolov8n.pt
 Thumbs.db
 .vscode/
 .idea/
+vendor/DECA/

@@ -1,129 +1,228 @@
-import React, { useState } from 'react';
-import { MessageCircle, Images, ArrowRight, Heart, ScanFace } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { CalendarClock, ChevronRight, Clock3, Heart, Images, MessageCircle, ScanFace, Utensils } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { useAppState } from '../lib/store';
-import WellbeingInsights from '../components/WellbeingInsights';
-import Reminders from '../components/Reminders';
 import FaceRecognition from '../components/FaceRecognition';
+import { ScrollParallax, ScrollProgress, ScrollReveal, Surface } from '../components/MotionPrimitives';
+import { API_BASE } from '../lib/apiConfig';
 
 function greeting() {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
     return 'Good evening';
 }
 
+function formatTime(value) {
+    if (!value) return '';
+    const [hours, minutes] = value.split(':').map(Number);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return value;
+    const suffix = hours >= 12 ? 'PM' : 'AM';
+    return `${((hours + 11) % 12) + 1}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+function formatMemoryDate(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 export default function HomeView({ onNavigate }) {
-    const { profile, persona, memories } = useAppState();
+    const { profile, persona, memories = [], reminders = [] } = useAppState();
     const [scanning, setScanning] = useState(false);
+    const [foodQuery, setFoodQuery] = useState('');
+    const [nutrition, setNutrition] = useState(null);
+    const [nutLoading, setNutLoading] = useState(false);
+    const [nutError, setNutError] = useState(null);
+    const [mealOpen, setMealOpen] = useState(false);
+    const foodRef = useRef(null);
+    const pageRef = useRef(null);
+    const companionRef = useRef(null);
+    const firstName = (profile?.name || 'friend').trim().split(/\s+/)[0];
+    const activeReminders = reminders
+        .filter((reminder) => reminder.enabled !== false)
+        .slice()
+        .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
+        .slice(0, 3);
+    const recentMemories = memories.slice(0, 3);
+
+    useEffect(() => {
+        if (mealOpen) foodRef.current?.focus();
+    }, [mealOpen]);
+
+    const fetchNutrition = async () => {
+        if (!foodQuery.trim()) return;
+        setNutLoading(true);
+        setNutError(null);
+        setNutrition(null);
+        try {
+            const res = await fetch(`${API_BASE}/health-apis/nutrition`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: foodQuery.trim() }),
+            });
+            const data = await res.json();
+            setNutrition(data);
+        } catch (error) {
+            setNutError('Could not fetch nutrition data. Try again when you are connected.');
+        } finally {
+            setNutLoading(false);
+        }
+    };
 
     return (
-        <div className="hv">
+        <div ref={pageRef} className="hv premium-page">
+            <ScrollProgress containerRef={pageRef} />
             {scanning && <FaceRecognition onClose={() => setScanning(false)} />}
-            <div className="hv-blob b1" />
-            <div className="hv-blob b2" />
 
+            <div className="hv-ambient" aria-hidden="true" />
             <div className="hv-inner">
-                <p className="hv-greet">{greeting()},</p>
-                <h1 className="hv-name">{profile?.name || 'friend'} 👋</h1>
-
-                {/* Persona spotlight */}
-                {persona && (
-                    <div className="hv-persona" onClick={() => onNavigate('avatar')}>
-                        <div className="hv-persona-glow" />
-                        <div className="hv-persona-body">
-                            <div className="hv-avatar">
-                                {persona.faceImage
-                                    ? <img src={persona.faceImage} alt={persona.name} />
-                                    : <Heart size={26} color="#fff" />}
-                            </div>
-                            <div className="hv-persona-text">
-                                <div className="hv-persona-name">{persona.name}</div>
-                                <div className="hv-persona-rel">your {persona.relationship} · always here for you</div>
-                            </div>
-                            <button className="hv-talk">Talk to {persona.name} <ArrowRight size={18} /></button>
-                        </div>
+                <ScrollReveal className="hv-welcome" distance={12}>
+                    <div>
+                        <span className="hv-eyebrow">Your space</span>
+                        <h1>{greeting()}, {firstName}</h1>
+                        <p>Here’s what’s waiting today.</p>
                     </div>
-                )}
+                    <div className="hv-date-mark">
+                        <Clock3 size={16} />
+                        <span>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+                    </div>
+                </ScrollReveal>
 
-                {/* Quick tiles */}
-                <div className="hv-tiles">
-                    <button className="hv-tile" onClick={() => onNavigate('avatar')}>
-                        <MessageCircle size={26} color="#a78bfa" />
-                        <div className="hv-tile-t">Talk</div>
-                        <div className="hv-tile-d">Have a warm conversation with {persona?.name || 'your companion'}.</div>
-                    </button>
-                    <button className="hv-tile" onClick={() => onNavigate('memories')}>
-                        <Images size={26} color="#60a5fa" />
-                        <div className="hv-tile-t">Memories</div>
-                        <div className="hv-tile-d">{memories.length > 0 ? `${memories.length} saved` : 'Add photos, notes & voices'}</div>
-                    </button>
-                    <button className="hv-tile" onClick={() => setScanning(true)}>
-                        <ScanFace size={26} color="#f472b6" />
-                        <div className="hv-tile-t">Who is this?</div>
-                        <div className="hv-tile-d">Point the camera at someone to recognise them.</div>
-                    </button>
+                <div className="hv-drawbridge">
+                    <ScrollReveal className="hv-stage-wrap" distance={18}>
+                        <Surface className="hv-companion-stage" interactive>
+                            <div className="hv-stage-copy">
+                                <span className="hv-eyebrow">Companion room</span>
+                                <h2>{persona?.name || 'Your companion'}</h2>
+                                <p>Ready to talk.</p>
+                                <button type="button" className="ui-btn ui-btn--primary hv-talk" onClick={() => onNavigate('avatar')}>
+                                    <MessageCircle size={18} /> Talk to {persona?.name || 'your companion'}
+                                    <ChevronRight size={17} />
+                                </button>
+                            </div>
+                            <ScrollParallax targetRef={companionRef} containerRef={pageRef} distance={16} className="hv-presence-wrap">
+                                <div ref={companionRef} className="hv-presence" aria-label={`${persona?.name || 'Companion'} visual`}>
+                                    <div className="hv-presence-halo" aria-hidden="true" />
+                                    {persona?.faceImage ? (
+                                        <img src={persona.faceImage} alt={persona.name || 'Companion'} />
+                                    ) : (
+                                        <span>{(persona?.name || 'F').charAt(0).toUpperCase()}</span>
+                                    )}
+                                </div>
+                            </ScrollParallax>
+                            <div className="hv-stage-line" aria-hidden="true" />
+                        </Surface>
+                    </ScrollReveal>
+
+                    <ScrollReveal className="hv-today-wrap" direction="right" distance={18}>
+                        <Surface className="hv-today">
+                            <div className="hv-section-head">
+                                <div>
+                                    <span className="hv-eyebrow">Today</span>
+                                    <h2>A gentle plan</h2>
+                                </div>
+                                <CalendarClock size={20} aria-hidden="true" />
+                            </div>
+                            <div className="hv-agenda">
+                                {activeReminders.length === 0 ? (
+                                    <button type="button" className="hv-agenda-row" onClick={() => onNavigate('reminders')}>
+                                        <span className="hv-agenda-icon"><Clock3 size={16} /></span>
+                                        <span><strong>No reminders scheduled today</strong><small>Add one when you’re ready.</small></span>
+                                        <ChevronRight size={17} />
+                                    </button>
+                                ) : activeReminders.map((reminder) => (
+                                    <button type="button" className="hv-agenda-row" key={reminder.id} onClick={() => onNavigate('reminders')}>
+                                        <span className="hv-agenda-time">{formatTime(reminder.time)}</span>
+                                        <span><strong>{reminder.title}</strong><small>{reminder.description || reminder.type || 'Reminder'}</small></span>
+                                        <ChevronRight size={17} />
+                                    </button>
+                                ))}
+                                {memories.length > 0 && (
+                                    <button type="button" className="hv-agenda-row" onClick={() => onNavigate('memories')}>
+                                        <span className="hv-agenda-icon"><Images size={16} /></span>
+                                        <span><strong>{memories.length} {memories.length === 1 ? 'memory' : 'memories'} saved</strong><small>Keep a moment close.</small></span>
+                                        <ChevronRight size={17} />
+                                    </button>
+                                )}
+                            </div>
+                        </Surface>
+                    </ScrollReveal>
                 </div>
 
-                {/* Reminders & medication */}
-                <Reminders />
-
-                {/* Wellbeing insights from recent conversations */}
-                <WellbeingInsights />
-
-                {/* Recent memories preview */}
-                {memories.length > 0 && (
-                    <div className="hv-recent">
-                        <div className="hv-recent-head">
-                            <h3>Recent memories</h3>
-                            <button onClick={() => onNavigate('memories')}>See all</button>
+                <ScrollReveal className="hv-memory-section" distance={14}>
+                    <div className="hv-section-head hv-memory-head">
+                        <div>
+                            <span className="hv-eyebrow">Archive</span>
+                            <h2>Recent memories</h2>
                         </div>
-                        <div className="hv-recent-row">
-                            {memories.slice(0, 4).map((m) => (
-                                <div key={m.id} className="hv-recent-card" onClick={() => onNavigate('memories')}>
-                                    {m.image
-                                        ? <img src={m.image} alt={m.caption || 'memory'} />
-                                        : <div className="hv-recent-noimg">{(m.caption || 'Memory').slice(0, 40)}</div>}
-                                </div>
+                        <button type="button" className="hv-text-link" onClick={() => onNavigate('memories')}>View all <ChevronRight size={16} /></button>
+                    </div>
+                    {recentMemories.length === 0 ? (
+                        <Surface className="hv-empty-row">
+                            <Images size={20} />
+                            <span>No memories yet. Add a photo, note, or voice message.</span>
+                            <button type="button" className="ui-btn ui-btn--ghost" onClick={() => onNavigate('memories')}>Add memory</button>
+                        </Surface>
+                    ) : (
+                        <div className="hv-memory-grid">
+                            {recentMemories.map((memory) => (
+                                <button type="button" className="hv-memory-tile" key={memory.id} onClick={() => onNavigate('memories')}>
+                                    {memory.image ? <img src={memory.image} alt={memory.caption || 'Saved memory'} /> : <span className="hv-memory-placeholder"><Heart size={24} /></span>}
+                                    <span className="hv-memory-meta"><strong>{memory.caption || 'Saved memory'}</strong><small>{formatMemoryDate(memory.date)}</small></span>
+                                </button>
                             ))}
                         </div>
+                    )}
+                </ScrollReveal>
+
+                <ScrollReveal className="hv-care-section" distance={12}>
+                    <div className="hv-section-head">
+                        <div>
+                            <span className="hv-eyebrow">Care tools</span>
+                            <h2>Keep the day moving</h2>
+                        </div>
                     </div>
-                )}
+                    <div className="hv-care-line">
+                        <button type="button" className="hv-care-action" onClick={() => setMealOpen((open) => !open)} aria-expanded={mealOpen}>
+                            <span className="hv-care-icon"><Utensils size={18} /></span>
+                            <span><strong>Log a meal</strong><small>Look up a nutrition estimate.</small></span>
+                            <ChevronRight size={17} className={mealOpen ? 'is-open' : ''} />
+                        </button>
+                        <button type="button" className="hv-care-action" onClick={() => setScanning(true)}>
+                            <span className="hv-care-icon"><ScanFace size={18} /></span>
+                            <span><strong>Recognize a person</strong><small>Use the camera to identify someone.</small></span>
+                            <ChevronRight size={17} />
+                        </button>
+                    </div>
+                    {mealOpen && (
+                        <motion.div className="hv-meal-drawer" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+                            <label htmlFor="hv-food-query">What did you eat?</label>
+                            <div className="hv-meal-form">
+                                <input id="hv-food-query" ref={foodRef} className="ui-input" value={foodQuery} onChange={(event) => setFoodQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && fetchNutrition()} placeholder="e.g. two eggs and toast" />
+                                <button type="button" className="ui-btn ui-btn--primary" onClick={fetchNutrition} disabled={nutLoading}>{nutLoading ? 'Looking up…' : 'Log meal'}</button>
+                            </div>
+                            {nutError && <p className="hv-feedback hv-feedback--error">{nutError}</p>}
+                            {nutrition?.foods?.length > 0 && (
+                                <div className="hv-nutrition-result">
+                                    {nutrition.foods.map((food, index) => (
+                                        <div key={`${food.food_name}-${index}`} className="hv-food-result">
+                                            <strong>{food.food_name}</strong>
+                                            <dl>
+                                                <div><dt>Calories</dt><dd>{Math.round(food.nf_calories)} </dd></div>
+                                                <div><dt>Protein</dt><dd>{Math.round(food.nf_protein)}g</dd></div>
+                                                <div><dt>Carbs</dt><dd>{Math.round(food.nf_total_carbohydrate)}g</dd></div>
+                                                <div><dt>Fat</dt><dd>{Math.round(food.nf_total_fat)}g</dd></div>
+                                            </dl>
+                                        </div>
+                                    ))}
+                                    <small>Nutrition estimate from {nutrition.source || 'the connected service'}{nutrition.demo ? ' · Demo data' : ''}</small>
+                                </div>
+                            )}
+                        </motion.div>
+                    )}
+                </ScrollReveal>
             </div>
-
-            <style>{`
-        .hv { position: relative; height: 100%; overflow-y: auto; background: #0f172a; color: #fff; font-family: system-ui, sans-serif; }
-        .hv-blob { position: absolute; width: 40vw; height: 40vw; border-radius: 50%; filter: blur(130px); opacity: 0.22; pointer-events: none; }
-        .hv-blob.b1 { background: #7c3aed; top: -15%; left: -10%; }
-        .hv-blob.b2 { background: #2563eb; bottom: -15%; right: -10%; }
-        .hv-inner { position: relative; z-index: 1; max-width: 880px; margin: 0 auto; padding: 48px 28px; }
-        .hv-greet { color: #94a3b8; font-size: 1.2rem; margin: 0; }
-        .hv-name { font-size: 2.6rem; font-weight: 800; margin: 2px 0 28px; }
-
-        .hv-persona { position: relative; border-radius: 22px; cursor: pointer; margin-bottom: 24px; overflow: hidden; }
-        .hv-persona-glow { position: absolute; inset: 0; background: linear-gradient(120deg, rgba(124,58,237,0.35), rgba(37,99,235,0.35)); }
-        .hv-persona-body { position: relative; display: flex; align-items: center; gap: 18px; padding: 22px; border: 1px solid rgba(255,255,255,0.12); border-radius: 22px; backdrop-filter: blur(6px); }
-        .hv-avatar { width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg,#7c3aed,#2563eb); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 30px rgba(124,58,237,0.5); overflow: hidden; }
-        .hv-avatar img { width: 100%; height: 100%; object-fit: cover; }
-        .hv-persona-text { flex: 1; min-width: 0; }
-        .hv-persona-name { font-size: 1.4rem; font-weight: 800; }
-        .hv-persona-rel { color: #cbd5e1; font-size: 0.9rem; }
-        .hv-talk { display: flex; align-items: center; gap: 8px; background: #fff; color: #1e1b4b; border: none; padding: 12px 18px; border-radius: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-
-        .hv-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 28px; }
-        @media (max-width: 560px) { .hv-tiles { grid-template-columns: 1fr; } }
-        .hv-tile { text-align: left; background: rgba(30,41,59,0.55); border: 1px solid rgba(255,255,255,0.09); border-radius: 18px; padding: 22px; cursor: pointer; transition: transform .2s, border-color .2s; }
-        .hv-tile:hover { transform: translateY(-3px); border-color: rgba(167,139,250,0.4); }
-        .hv-tile-t { font-size: 1.15rem; font-weight: 700; margin-top: 12px; }
-        .hv-tile-d { color: #94a3b8; font-size: 0.88rem; margin-top: 4px; }
-
-        .hv-recent-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-        .hv-recent-head h3 { margin: 0; font-size: 1.15rem; }
-        .hv-recent-head button { background: none; border: none; color: #a78bfa; cursor: pointer; font-size: 0.9rem; }
-        .hv-recent-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
-        .hv-recent-card { width: 150px; height: 110px; border-radius: 14px; overflow: hidden; flex-shrink: 0; cursor: pointer; border: 1px solid rgba(255,255,255,0.08); background: rgba(30,41,59,0.6); }
-        .hv-recent-card img { width: 100%; height: 100%; object-fit: cover; }
-        .hv-recent-noimg { padding: 14px; font-size: 0.82rem; color: #cbd5e1; }
-      `}</style>
         </div>
     );
 }

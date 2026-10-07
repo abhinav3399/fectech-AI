@@ -1,0 +1,76 @@
+{
+  "name": "factech-ai-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Factech AI Windows desktop application",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "desktop:dev": "npm run frontend:build && electron .",
+    "desktop:build": "npm run frontend:build && powershell -ExecutionPolicy Bypass -File desktop/build-python.ps1",
+    "desktop:dist": "npm run desktop:build && electron-builder --win nsis portable",
+    "desktop:lint": "npm --prefix frontend run lint"
+  },
+  "devDependencies": {
+    "electron": "41.10.6",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "ai.factech.desktop",
+    "productName": "Factech AI",
+    "artifactName": "Factech-AI-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "!desktop/runtime/**/*",
+      "frontend/dist/**/*",
+      "static/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "static",
+        "to": "runtime/static",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "frontend/dist",
+        "to": "runtime/frontend/dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "desktop/runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "model_service/models",
+        "to": "runtime/model_service/models",
+        "filter": [
+          "face_landmarker.task"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

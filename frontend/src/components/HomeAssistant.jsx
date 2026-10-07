@@ -1,9 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Send, Sparkles, Volume2, VolumeX } from 'lucide-react';
-
-// Relative by default -> same origin as the served page (single-origin).
-const API_BASE = import.meta.env.VITE_API_BASE || "/api/v1";
+import { API_BASE } from '../lib/apiConfig';
 
 const SUGGESTIONS = [
     "What can you do?",
@@ -145,90 +143,95 @@ const HomeAssistant = ({ onGetStarted }) => {
 
             <style>{`
         .fa-assistant {
-            background: rgba(30, 41, 59, 0.7);
+            background: var(--glass-strong);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(255,255,255,0.1);
-            padding: 18px;
-            border-radius: 20px;
+            border: 1px solid var(--border);
+            padding: var(--s-5);
+            border-radius: var(--r-xl);
             width: 100%;
             max-width: 420px;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+            box-shadow: var(--shadow-lg);
             display: flex;
             flex-direction: column;
-            font-family: system-ui, sans-serif;
+            font-family: inherit;
+            animation: ui-fade-up 0.6s var(--ease) both;
         }
-        .fa-header { display: flex; align-items: center; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .fa-header { display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-4); border-bottom: 1px solid var(--border); }
         .fa-avatar {
-            width: 44px; height: 44px; border-radius: 50%;
+            width: 44px; height: 44px; border-radius: var(--r-md);
             display: flex; align-items: center; justify-content: center;
-            background: linear-gradient(135deg, #7c3aed, #2563eb);
+            background: var(--grad-brand); box-shadow: var(--glow-brand);
             flex-shrink: 0;
         }
         .fa-id { flex: 1; min-width: 0; }
-        .fa-name { font-weight: 700; color: #fff; font-size: 0.95rem; }
-        .fa-status { font-size: 0.8rem; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
+        .fa-name { font-weight: 800; color: var(--text); font-size: var(--fs-md); letter-spacing: -0.01em; }
+        .fa-status { font-size: var(--fs-xs); color: var(--text-muted); display: flex; align-items: center; gap: 6px; font-weight: 600; }
         .fa-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        .fa-dot.on { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
-        .fa-dot.off { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+        .fa-dot.on { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .fa-dot.off { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
         .fa-voice {
-            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
-            color: #cbd5e1; width: 32px; height: 32px; border-radius: 10px;
-            display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s;
+            background: var(--surface-2); border: 1px solid var(--border);
+            color: var(--text-muted); width: 34px; height: 34px; border-radius: var(--r-sm);
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+            transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease);
         }
-        .fa-voice:hover { background: rgba(255,255,255,0.16); color: #fff; }
+        .fa-voice:hover { background: var(--surface-3); color: var(--text); transform: translateY(-1px); }
 
         .fa-messages {
-            display: flex; flex-direction: column; gap: 10px;
-            margin: 14px 0; max-height: 240px; min-height: 180px;
-            overflow-y: auto; padding-right: 4px;
+            display: flex; flex-direction: column; gap: var(--s-3);
+            margin: var(--s-4) 0; max-height: 240px; min-height: 180px;
+            overflow-y: auto; padding-right: var(--s-1);
         }
         .fa-messages::-webkit-scrollbar { width: 6px; }
-        .fa-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+        .fa-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: var(--r-pill); }
 
         .fa-bubble {
-            padding: 10px 14px; border-radius: 14px; font-size: 0.9rem;
-            line-height: 1.45; max-width: 85%; word-wrap: break-word; color: #e2e8f0;
+            padding: 10px 14px; border-radius: var(--r-md); font-size: var(--fs-sm);
+            line-height: 1.5; max-width: 85%; word-wrap: break-word; color: var(--text);
+            animation: ui-fade-up 0.4s var(--ease) both;
         }
-        .fa-bubble.bot { background: rgba(15, 23, 42, 0.85); border-top-left-radius: 2px; align-self: flex-start; }
+        .fa-bubble.bot { background: var(--surface-2); border: 1px solid var(--border); border-top-left-radius: var(--r-sm); align-self: flex-start; color: var(--text); }
         .fa-bubble.user {
-            background: linear-gradient(135deg, rgba(124,58,237,0.35), rgba(37,99,235,0.35));
-            border: 1px solid rgba(124,58,237,0.4); color: #fff;
-            align-self: flex-end; border-top-right-radius: 2px;
+            background: var(--grad-brand-soft);
+            border: 1px solid rgba(139,92,246,0.4); color: #fff;
+            align-self: flex-end; border-top-right-radius: var(--r-sm);
         }
-        .fa-bubble-img { display: block; margin-top: 8px; width: 100%; border-radius: 10px; }
+        .fa-bubble-img { display: block; margin-top: var(--s-2); width: 100%; border-radius: var(--r-sm); }
 
         .fa-typing { display: flex; gap: 5px; align-items: center; }
         .fa-typing span {
-            width: 7px; height: 7px; border-radius: 50%; background: #94a3b8;
+            width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted);
             animation: fa-blink 1.2s infinite ease-in-out both;
         }
         .fa-typing span:nth-child(2) { animation-delay: 0.2s; }
         .fa-typing span:nth-child(3) { animation-delay: 0.4s; }
         @keyframes fa-blink { 0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
 
-        .fa-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+        .fa-suggestions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-bottom: var(--s-3); }
         .fa-chip {
-            background: rgba(124, 58, 237, 0.12); border: 1px solid rgba(124, 58, 237, 0.3);
-            color: #c4b5fd; padding: 6px 12px; border-radius: 16px; font-size: 0.78rem;
-            cursor: pointer; transition: 0.2s;
+            background: rgba(139, 92, 246, 0.14); border: 1px solid rgba(139, 92, 246, 0.32);
+            color: #ddd6fe; padding: 6px 14px; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600;
+            cursor: pointer; transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease);
         }
-        .fa-chip:hover:not(:disabled) { background: rgba(124, 58, 237, 0.25); color: #fff; }
+        .fa-chip:hover:not(:disabled) { background: rgba(139, 92, 246, 0.26); color: #fff; transform: translateY(-1px); }
         .fa-chip:disabled { opacity: 0.5; cursor: default; }
 
-        .fa-input-row { display: flex; gap: 8px; align-items: center; }
+        .fa-input-row { display: flex; gap: var(--s-2); align-items: center; }
         .fa-input {
-            flex: 1; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 12px; padding: 12px 14px; color: #fff; font-size: 0.9rem; outline: none; transition: 0.2s;
+            flex: 1; background: var(--glass-strong); border: 1px solid var(--border);
+            border-radius: var(--r-md); padding: 12px 14px; color: var(--text); font-size: var(--fs-sm); outline: none;
+            transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
         }
-        .fa-input::placeholder { color: #64748b; }
-        .fa-input:focus { border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,0.15); }
+        .fa-input::placeholder { color: var(--text-dim); }
+        .fa-input:focus { border-color: var(--brand-1); box-shadow: 0 0 0 3px var(--ring); }
         .fa-send {
-            width: 44px; height: 44px; border-radius: 12px; border: none; flex-shrink: 0;
-            background: linear-gradient(135deg, #7c3aed, #2563eb); color: #fff;
-            display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.15s;
+            width: 44px; height: 44px; border-radius: var(--r-md); border: none; flex-shrink: 0;
+            background: var(--grad-brand); color: var(--text-on-brand); box-shadow: var(--glow-brand);
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+            transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
         }
-        .fa-send:hover:not(:disabled) { transform: scale(1.06); }
-        .fa-send:disabled { opacity: 0.45; cursor: default; }
+        .fa-send:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 14px 44px rgba(124, 58, 237, 0.5); }
+        .fa-send:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: none; }
       `}</style>
         </div>
     );
