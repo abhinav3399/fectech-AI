@@ -87,6 +87,16 @@ this service. (The app code is unchanged — only `.env`.)
 | `RELIEF_GRID` | `180` | heightfield resolution |
 | `RELIEF_SIZE_MM` / `RELIEF_BASE_MM` | `120` / `4` | plaque size / backing |
 | `MODEL_SERVICE_PORT` / `MODEL_SERVICE_PUBLIC_BASE` | `8800` | port / URL the app fetches files from |
+| `LOCAL_WORKER_TOKEN` | _(empty)_ | optional shared secret required by both the worker and the main backend |
+
+### Render deployment
+
+The repository includes [`render.yaml`](../render.yaml) and
+[`Dockerfile`](./Dockerfile) for deploying this worker as the separate
+`factech-model-worker` service. Keep `LOCAL_WORKER_TOKEN` identical on the
+worker and `factech-api`, and set the frontend's Vercel
+`VITE_API_BASE_URL` to the public `factech-api` URL. The worker is CPU-only;
+the first generation can take several minutes on a free instance.
 
 ## Quick test (no app needed)
 ```bash

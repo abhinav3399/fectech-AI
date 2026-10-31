@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: factech-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: MODEL_3D_PROVIDER
+        value: local
+      # Render service URLs are public. Keep this in sync with the worker URL
+      # shown by Render after the worker is created.
+      - key: MODEL_3D_URL
+        value: https://factech-model-worker.onrender.com
+      - key: LOCAL_WORKER_TOKEN
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: QDRANT_MODE
+        value: local
+      - key: QDRANT_PATH
+        value: /app/qdrant_storage
+
+  - type: web
+    name: factech-model-worker
+    runtime: docker
+    dockerfilePath: ./model_service/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: MODEL_SERVICE_PORT
+        value: "10000"
+      - key: MODEL_SERVICE_PUBLIC_BASE
+        value: https://factech-model-worker.onrender.com
+      - key: LOCAL_WORKER_TOKEN
+        sync: false
