@@ -1,11 +1,10 @@
 print("DEBUG: Importing OpenCV...", flush=True)
 import cv2
-print("DEBUG: Importing Keras-Facenet...", flush=True)
-from keras_facenet import FaceNet
 print("DEBUG: Importing PIL/Numpy...", flush=True)
 from PIL import Image
 import numpy as np
 import os
+import threading
 
 class FaceService:
     def __init__(self, model_name="Facenet512"):
@@ -32,9 +31,22 @@ class FaceService:
                         break
         if self.face_cascade is None:
             print("WARNING: OpenCV Haar cascade is unavailable; using full-image embedding fallback.", flush=True)
-        self.embedder = FaceNet()
+        # TensorFlow/FaceNet is large enough to exceed small cloud instances.
+        # Load it only when a face-recognition request actually needs it.
+        self.embedder = None
+        self._embedder_lock = threading.Lock()
         self.model_name = model_name
-        print("DEBUG: Face Models Loaded.", flush=True)
+        print("DEBUG: Face detector ready; FaceNet will load on first recognition request.", flush=True)
+
+    def _get_embedder(self):
+        if self.embedder is None:
+            with self._embedder_lock:
+                if self.embedder is None:
+                    print("DEBUG: Loading Keras-Facenet on demand...", flush=True)
+                    from keras_facenet import FaceNet
+                    self.embedder = FaceNet()
+                    print("DEBUG: FaceNet loaded.", flush=True)
+        return self.embedder
 
     def generate_embedding(self, image_path: str) -> list:
         try:
@@ -67,7 +79,7 @@ class FaceService:
             face = np.expand_dims(face, axis=0) # (1, 160, 160, 3)
             
             # Embed
-            embedding = self.embedder.embeddings(face)[0]
+            embedding = self._get_embedder().embeddings(face)[0]
             return embedding.tolist()
             
         except Exception as e:
