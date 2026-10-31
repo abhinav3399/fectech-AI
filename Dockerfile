@@ -12,7 +12,7 @@ WORKDIR /app
 
 # System libs needed by OpenCV / ffmpeg (Whisper) / pygame
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 libglib2.0-0 ffmpeg \
+    libgl1 libglib2.0-0 libgomp1 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps (heavy: TensorFlow + PyTorch + YOLO + Whisper)

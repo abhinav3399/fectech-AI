@@ -10,8 +10,22 @@ import os
 class FaceService:
     def __init__(self, model_name="Facenet512"):
         print("DEBUG: Loading OpenCV and Keras-Facenet...", flush=True)
-        # Load Haar Cascade
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        # OpenCV wheels normally bundle this file, but some slim/container
+        # environments omit the data directory. Do not make the whole API
+        # unavailable when the optional detector asset is missing.
+        cascade_paths = [
+            os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"),
+            os.path.join(os.path.dirname(cv2.__file__), "data", "haarcascade_frontalface_default.xml"),
+        ]
+        self.face_cascade = None
+        for cascade_path in cascade_paths:
+            if os.path.isfile(cascade_path):
+                candidate = cv2.CascadeClassifier(cascade_path)
+                if not candidate.empty():
+                    self.face_cascade = candidate
+                    break
+        if self.face_cascade is None:
+            print("WARNING: OpenCV Haar cascade is unavailable; using full-image embedding fallback.", flush=True)
         self.embedder = FaceNet()
         self.model_name = model_name
         print("DEBUG: Face Models Loaded.", flush=True)
@@ -27,20 +41,19 @@ class FaceService:
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             
-            # Detect
-            faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
-            
-            if len(faces) == 0:
-                print(f"No face detected (OpenCV) in {image_path}")
-                return []
-
-            # Take largest face
-            # OpenCV returns (x, y, w, h)
-            face_data = max(faces, key=lambda f: f[2] * f[3])
-            x, y, w, h = face_data
-            
-            # Crop
-            face = img_rgb[y:y+h, x:x+w]
+            if self.face_cascade is not None:
+                faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+                if len(faces) == 0:
+                    print(f"No face detected (OpenCV) in {image_path}")
+                    return []
+                # Take largest face. OpenCV returns (x, y, w, h).
+                x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+                face = img_rgb[y:y+h, x:x+w]
+            else:
+                # Keep the API usable in minimal images. FaceNet still
+                # provides a deterministic embedding, but callers should
+                # prefer the normal detector-backed path when available.
+                face = img_rgb
             
             # Resize for Facenet (160x160)
             face = Image.fromarray(face).resize((160, 160))
