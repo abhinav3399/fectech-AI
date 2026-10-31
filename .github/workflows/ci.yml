@@ -23,6 +23,8 @@ jobs:
   backend:
     name: Backend unit tests (light)
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,4 +32,4 @@ jobs:
           python-version: "3.13"
       # Only the light deps the unit tests need — NOT the heavy ML requirements.txt.
       - run: pip install "pydantic-settings>=2" httpx pytest
-      - run: pytest tests/test_config.py tests/test_voice_routing.py tests/test_security.py -q
+      - run: python -m pytest tests/test_config.py tests/test_voice_routing.py tests/test_security.py -q
