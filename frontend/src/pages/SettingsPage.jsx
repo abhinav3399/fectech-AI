@@ -8,7 +8,7 @@ import {
     Download, RotateCcw, Check, Pencil, Info,
 } from 'lucide-react';
 import {
-    useAppState, getState, setProfile, setPersona, setEmergencyContacts, setAppSettings, resetAll,
+    useAppState, getState, setProfile, setPersona, setEmergencyContacts, setAppSettings, resetAll, clearTranscript,
 } from '../lib/store';
 import { OFFLINE_MODEL, OFFLINE_MODEL_LICENSE } from '../lib/offlineAi';
 import { checkOllama, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL } from '../lib/ollama';
@@ -87,6 +87,17 @@ export default function SettingsPage() {
         if (!ok) return;
         try { await axios.post(`${API_BASE}/memory/clear`, { user: { name: profile?.name } }); } catch (e) { /* fail-soft */ }
         setMems([]); toast('All memories cleared', 'info');
+    };
+    const clearConversation = async () => {
+        const ok = await confirmAction({
+            title: 'Clear this conversation?',
+            message: 'The visible chat history on this device is removed. Long-term memories the companion learned are kept until you forget them below.',
+            confirmLabel: 'Clear chat', danger: true,
+        });
+        if (!ok) return;
+        clearTranscript();
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('factech:conversation-cleared'));
+        toast('Conversation cleared', 'info');
     };
     const forgetOne = async (m) => {
         const ok = await confirmAction({ title: 'Forget this memory?', message: `“${m.text}”`, confirmLabel: 'Forget', danger: true });
@@ -235,6 +246,7 @@ export default function SettingsPage() {
                         </div>
                     )}
                 {mems.length > 0 && <button className="set-btn danger" onClick={clearMemories}><Trash2 size={16} /> Forget all memories</button>}
+                <button className="set-btn" onClick={clearConversation}><Trash2 size={16} /> Clear conversation history</button>
             </section>
 
             {/* ACCESSIBILITY */}
@@ -299,7 +311,7 @@ export default function SettingsPage() {
             {/* AI MODE */}
             <section className="set-card">
                 <div className="set-card-head"><Brain size={18} /><h2>AI mode</h2></div>
-                <p className="set-card-help">Auto uses phone-local Ollama when available, then the configured backend, then the downloaded offline model. Ollama itself is not bundled in this APK.</p>
+                <p className="set-card-help">Auto tries your local Ollama server first, then the Factech backend (which also prefers local Ollama), then the downloaded on-device model. Ollama is not bundled in this APK.</p>
                 <div className="set-sizes ai-mode-selector">
                     {[
                         ['auto', 'Auto'],

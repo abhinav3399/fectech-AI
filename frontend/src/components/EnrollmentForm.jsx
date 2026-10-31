@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import AudioRecorder from './AudioRecorder';
 import { UserPlus, PackagePlus, Save, X, Mic, Image as ImageIcon } from 'lucide-react';
 

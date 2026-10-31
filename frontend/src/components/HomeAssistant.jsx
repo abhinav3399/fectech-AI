@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Send, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import { API_BASE } from '../lib/apiConfig';
+import { useAppState } from '../lib/store';
+import { sanitizeReply } from '../lib/chatText';
+import { generateOfflineReply } from '../lib/offlineAi';
+import { DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, generateOllamaReply, isNativeCapacitor } from '../lib/ollama';
 
 const SUGGESTIONS = [
     "What can you do?",
@@ -9,29 +13,16 @@ const SUGGESTIONS = [
     "Where are my keys?",
 ];
 
-// Lightweight offline answers so the assistant is never "dead" if the
-// backend isn't running. Real answers come from /chat/query when online.
-const localFallback = (q) => {
-    const t = q.toLowerCase();
-    if (t.includes("what can you") || t.includes("help") || t.includes("do you do")) {
-        return "I'm your Factech AI memory assistant. I can recognise faces, find your personal objects, and answer questions about the people in your life. Open the app to enrol your first memory.";
-    }
-    if (t.includes("who")) {
-        return "Once your caregiver enrols people, I'll instantly recall who they are, your relationship, and any notes — just point the camera or ask me by name.";
-    }
-    if (t.includes("where") || t.includes("find") || t.includes("key") || t.includes("wallet")) {
-        return "I remember where your important objects were last seen. Scan an item once and I'll help you find it again.";
-    }
-    return "I'm running in preview mode right now. Start the assistant to unlock live memory recall, face recognition, and voice replies.";
-};
-
-const HomeAssistant = ({ onGetStarted }) => {
+const HomeAssistant = () => {
+    const { profile, persona, settings = {} } = useAppState();
     const [messages, setMessages] = useState([
         { role: 'bot', text: "Hi, I'm your Factech AI assistant. Ask me to recall a person, find an object, or tell you what I can do." }
     ]);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
-    const [online, setOnline] = useState(null); // null = unknown, true, false
+    // 'online' = memory backend answered, 'local' = on-device/local model answered,
+    // 'offline' = nothing could answer. Never claim a local model answered when it did not.
+    const [status, setStatus] = useState('online');
     const [voiceOn, setVoiceOn] = useState(true);
     const scrollRef = useRef(null);
 
@@ -59,15 +50,43 @@ const HomeAssistant = ({ onGetStarted }) => {
         setIsTyping(true);
         try {
             const res = await axios.post(`${API_BASE}/chat/query`, { text: q }, { timeout: 20000 });
-            setOnline(true);
             const data = res.data || {};
-            const reply = data.text || "I couldn't find anything about that in my memory yet.";
+            const reply = sanitizeReply(data.text) || "I couldn't find anything about that in my memory yet.";
+            setStatus('online');
             setMessages((prev) => [...prev, { role: 'bot', text: reply, image: data.image_base64 || null }]);
             speak(reply);
+            return;
         } catch (e) {
-            setOnline(false);
-            const reply = localFallback(q);
-            setMessages((prev) => [...prev, { role: 'bot', text: reply }]);
+            // The memory backend is unreachable. Try the configured local model
+            // honestly, and say so if there is none — never a canned "answer".
+            setStatus('offline');
+            let reply = '';
+            try {
+                if (settings.aiMode === 'offline') {
+                    reply = await generateOfflineReply({
+                        text: q,
+                        persona: persona || {},
+                        memories: [],
+                        history: messages.slice(-4),
+                    });
+                } else if (settings.aiMode === 'ollama' || isNativeCapacitor()) {
+                    reply = await generateOllamaReply({
+                        baseUrl: settings.ollamaUrl || DEFAULT_OLLAMA_URL,
+                        model: settings.ollamaModel || DEFAULT_OLLAMA_MODEL,
+                        text: q,
+                        persona: persona || {},
+                        userName: (profile?.name || '').split(' ')[0],
+                        history: messages.slice(-4),
+                    });
+                }
+                if (reply) setStatus('local');
+            } catch (localError) {
+                console.info('[CHAT] local model unavailable:', localError.message);
+            }
+            if (!reply) {
+                reply = 'The memory backend is unreachable and no local model is enabled. Start the backend, or choose Offline or Ollama in Settings.';
+            }
+            setMessages((prev) => [...prev, { role: 'bot', text: sanitizeReply(reply) }]);
         } finally {
             setIsTyping(false);
         }
@@ -89,8 +108,8 @@ const HomeAssistant = ({ onGetStarted }) => {
                 <div className="fa-id">
                     <div className="fa-name">Factech AI Assistant</div>
                     <div className="fa-status">
-                        <span className={`fa-dot ${online === false ? 'off' : 'on'}`}></span>
-                        {online === false ? 'Preview mode' : 'Online'}
+                        <span className={`fa-dot ${status === 'offline' ? 'off' : 'on'}`}></span>
+                        {status === 'local' ? 'Local model' : status === 'offline' ? 'Offline' : 'Backend'}
                     </div>
                 </div>
                 <button

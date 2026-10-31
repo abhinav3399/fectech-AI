@@ -26,8 +26,10 @@ GET  /health            -> {ok, pipeline, blender}
   - Honest: this is a **relief / bas-relief**, not a full 360° head. It's local,
     needs no GPU, and prints cleanly.
 - **C — CPU face mesh (default).** MediaPipe landmarks create an identity-preserving
-  textured face with a lightweight head volume, mouth metadata, and a printable STL.
-  It runs locally on CPU when `model_service/models/face_landmarker.task` is present.
+  textured facial surface, joined to a tapered skull/neck/ear volume with mouth
+  metadata and a printable STL. The unseen sides use a neutral skin material rather
+  than stretching the front photograph around the head. It runs locally on CPU when
+  `model_service/models/face_landmarker.task` is present.
 - **A — AI mesh (TripoSR / InstantMesh) + Blender.** Best likeness, **needs an
   NVIDIA GPU**. Scaffolded in `meshgen.py`; not wired yet.
 - **DECA — official FLAME-based face reconstruction.** Optional and isolated;
@@ -96,7 +98,9 @@ curl -s localhost:8800/status/<task_id>
 
 ## Honest caveats / fidelity ceiling
 - A single photo → 3D is **approximate**. Pipeline B is a **relief**, not a true
-  head; Pipeline A (when wired) hallucinates the unseen sides. The **real 2D
-  photo stays the faithful avatar** — 3D is a supplementary, printable aid.
+  head; Pipeline C provides coherent head anatomy but cannot recover the person's
+  hidden side/rear likeness; Pipeline A (when wired) hallucinates the unseen sides.
+  The **real 2D photo stays the faithful avatar** — 3D is a supplementary,
+  printable aid.
 - The pseudo-depth fallback is crude; install `torch`+`transformers` for real
   Depth Anything V2, and/or set `BLENDER_PATH` for the better build.

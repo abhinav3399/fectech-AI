@@ -32,6 +32,9 @@ function ChatInterface({
     // Handle External Capture Trigger (e.g. Enrollment)
     useEffect(() => {
         if (captureTrigger && captureTrigger > 0) {
+            // Syncing an external trigger (parent enrollment action) into local UI
+            // state is the intended behaviour here.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setCameraMode(enrollType || 'person');
             setShowCamera(true);
         }

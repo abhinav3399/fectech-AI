@@ -90,6 +90,8 @@ function Model({ isSpeaking, src }) {
     const setMorph = (name, value) => {
         for (const mesh of rig.current || []) {
             const index = mesh.morphTargetDictionary[name];
+            // three.js morph targets are imperative GPU buffers; mutation here is intentional.
+            // eslint-disable-next-line react-hooks/immutability
             if (index !== undefined) mesh.morphTargetInfluences[index] = Math.max(0, Math.min(1, value));
         }
     };

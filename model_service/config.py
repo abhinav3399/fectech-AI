@@ -40,5 +40,12 @@ class Cfg:
     BASE_MM = float(os.getenv("RELIEF_BASE_MM", "4"))    # backing thickness
     SIZE_MM = float(os.getenv("RELIEF_SIZE_MM", "120"))  # plaque width/height
 
+    # CPU reconstruction is memory-heavy: run one model at a time and cap the queue.
+    MAX_CONCURRENT_JOBS = int(os.getenv("MODEL_3D_MAX_CONCURRENT", "1"))
+    MAX_PENDING_JOBS = int(os.getenv("MODEL_3D_MAX_PENDING", "3"))
+    # Optional shared secret. When set, every request must send X-Local-Token.
+    WORKER_TOKEN = os.getenv("LOCAL_WORKER_TOKEN", "")
+    VERSION = "1.1.0"
+
 
 cfg = Cfg()

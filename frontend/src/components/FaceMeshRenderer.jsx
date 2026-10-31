@@ -9,7 +9,7 @@
  *   isSpeaking   boolean
  */
 import React, { useRef, useEffect, useMemo } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import { Points, PointMaterial } from '@react-three/drei';
 import * as THREE from 'three';
 import { getLevel } from '../lib/audiolevel';
@@ -80,7 +80,7 @@ function useFaceGeometry(frame, style) {
 // ─── Realistic Face Mesh ──────────────────────────────────────────────────────
 function RealisticMesh({ frame, isSpeaking }) {
     const meshRef  = useRef();
-    const { geoRef } = useFaceGeometry(frame, 'realistic');
+    useFaceGeometry(frame, 'realistic');
     const geo = useMemo(() => {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(478 * 3), 3));

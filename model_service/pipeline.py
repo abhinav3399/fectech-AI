@@ -44,7 +44,7 @@ def generate(image_path: str, out_dir: str, task_id: str, on_progress=None):
             print(f"[pipeline] face-mesh failed ({e}); falling back to depth-relief.")
 
     # --- Pipeline B (default): face-isolated depth-relief. ---
-    img = prepare_face(image_path)   # detect + tightly crop the FACE only
+    img = prepare_face(image_path, require_face=True)  # reject non-portraits honestly
     prog(25)
     depth = estimate_depth(img)
     prog(45)

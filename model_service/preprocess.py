@@ -28,10 +28,16 @@ def _largest_face(rgb: np.ndarray):
     return max(faces, key=lambda f: f[2] * f[3])  # (x, y, w, h)
 
 
-def prepare_face(path: str) -> Image.Image:
+def prepare_face(path: str, require_face: bool = False) -> Image.Image:
     img = Image.open(path).convert("RGB")
     rgb = np.array(img)
     box = _largest_face(rgb)
+    if box is None and require_face:
+        # Do not invent a model from a non-portrait. A clear failure is better than
+        # generating a plausible-looking relief of an object or an empty scene.
+        raise ValueError(
+            "No face detected in the photo. Use a clear, front-facing portrait with the whole face visible."
+        )
     if box is not None:
         x, y, w, h = [int(v) for v in box]
         # Expand generously to include HAIR (above), EARS (sides) and neck (below).

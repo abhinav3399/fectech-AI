@@ -22,7 +22,7 @@ def test_local_status_normalizes_worker_states(monkeypatch):
         async def __aexit__(self, *args):
             pass
 
-        async def get(self, url):
+        async def get(self, url, **kwargs):
             return Response()
 
     monkeypatch.setattr("app.services.mesh_service.httpx.AsyncClient", lambda **kwargs: Client())

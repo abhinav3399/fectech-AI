@@ -4,6 +4,9 @@ import { Phone, Plus, Star, Pencil, Trash2, X, UserPlus } from 'lucide-react';
 import { useAppState, setEmergencyContacts } from '../lib/store';
 import { toast, confirmAction } from '../components/Feedback';
 
+// Stable, render-pure contact ids (Date.now() during render trips React's purity rule).
+let contactSeq = 0;
+
 const timeAgo = (ts) => {
     const s = Math.floor((Date.now() - ts) / 1000);
     if (s < 60) return 'just now';
@@ -33,7 +36,7 @@ export default function ContactsPage() {
             toast('Contact updated', 'success');
         } else {
             const primary = emergencyContacts.length === 0;
-            setEmergencyContacts([...emergencyContacts, { id: String(Date.now()), name: n, relationship: rel.trim(), phone: p, primary }]);
+            setEmergencyContacts([...emergencyContacts, { id: `contact-${++contactSeq}`, name: n, relationship: rel.trim(), phone: p, primary }]);
             toast(`${n} added`, 'success');
         }
         close();

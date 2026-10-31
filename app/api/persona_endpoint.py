@@ -4,7 +4,7 @@ One persona primitive powers the avatar's voice and in-character chat.
 """
 import base64
 from fastapi import APIRouter, Body, HTTPException
-from app.services.llm_service import llm_service
+from app.services.llm_service import llm_service, sanitize_reply
 from app.services.tts_service import tts_service
 from app.services.voice_clone_service import voice_clone_service, parse_data_url
 from app.services.episodic_memory import episodic_memory
@@ -64,26 +64,47 @@ async def persona_chat(payload: dict = Body(...)):
     history = (payload.get("history") or [])[-MAX_HISTORY:]
     if not text:
         return {"status": "error", "text": ""}
-    print(f"[CHAT] user message: {text}")
-    print(f"[CHAT] conversation ID: {payload.get('conversation_id') or 'client-session'}")
-    print("[CHAT] API endpoint: /api/v1/persona/chat")
-    print("[CHAT] selected intent: persona_chat")
+    # Log shape, never content: transcripts contain personal health information.
+    print(f"[CHAT] turn received: {len(text)} chars, {len(history)} history turns, conversation={payload.get('conversation_id') or 'client-session'}")
     # Pull the most relevant memories from past conversations (fail-soft -> []).
     mems = episodic_memory.retrieve(user, text, limit=4)
     try:
         distress = float(payload.get("distress") or 0.0)
     except (TypeError, ValueError):
         distress = 0.0
-    print(f"[CHAT] backend received: {text}")
     try:
         reply = llm_service.chat_as_persona(text, persona=persona, user=user, history=history, memories=mems, distress=distress)
     except Exception as exc:
         print(f"[CHAT] AI service error: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.") from exc
-    if not reply or not reply.strip():
+    reply = sanitize_reply(reply)
+    if not reply:
         raise HTTPException(status_code=503, detail="AI service returned an empty response. Please try again.")
-    print(f"[CHAT] AI response: {reply[:500]}")
+    print(f"[CHAT] reply produced: {len(reply)} chars")
     return {"status": "ok", "text": reply}
+
+
+@router.get("/ai/status")
+async def ai_status():
+    """Which chat brain is actually available: local model, cloud, or neither."""
+    status = llm_service.provider_status()
+    local_ready = bool(status["ollama"]["available"])
+    cloud_ready = bool(settings_cloud())
+    return {
+        "status": "ok",
+        "preferred": "local" if status["local_first"] and local_ready else ("cloud" if cloud_ready else "none"),
+        "local": status["ollama"],
+        "cloud": status["cloud"],
+        "offline_model": {
+            "name": "Xenova/LaMini-Flan-T5-77M",
+            "runs_on": "device (WebView WASM)",
+            "requires_download": True,
+        },
+    }
+
+
+def settings_cloud() -> bool:
+    return bool(llm_service.client)
 
 
 @router.post("/persona/opener")

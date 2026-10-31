@@ -1,7 +1,89 @@
 import os
+import re
+import time
 import requests
 from groq import Groq
 from app.core.config import settings
+
+# Role labels that small/local models sometimes echo back from a prompt template.
+# They are never legitimate content at the START of an assistant reply.
+_ROLE_LABEL_RE = re.compile(
+    r"^\s*(?:user|assistant|ai|human|system|bot|time\s+assistant|task\s+assistant)\s*:\s*",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?।])\s+")
+
+
+def sanitize_reply(text: str) -> str:
+    """Remove prompt-format leakage and accidental duplication from a model reply.
+
+    Local instruction models (and occasionally hosted models) sometimes echo the
+    role labels from the prompt, producing things like
+    "User: User: Time assistant User: ...". Those are never part of a reply, so
+    strip leading labels repeatedly and collapse consecutive duplicate sentences.
+    Legitimate text is preserved.
+    """
+    value = (text or "").strip()
+    if not value:
+        return ""
+    # Severe template leakage: several role labels in one short reply means the
+    # model repeated the prompt instead of answering. Return nothing so the caller
+    # can use another provider (or show an honest error) rather than displaying it.
+    label_count = len(re.findall(r"\b(?:user|assistant|time\s+assistant|task\s+assistant)\s*:", value, re.IGNORECASE))
+    if label_count >= 3 and len(value) < 240:
+        return ""
+    # Strip any run of leading role labels, including stacked ones.
+    previous = None
+    while value != previous:
+        previous = value
+        value = _ROLE_LABEL_RE.sub("", value, count=1).strip()
+    # A single line that is only a label ("Assistant:") leaves nothing useful.
+    if not value:
+        return ""
+    # Collapse consecutive duplicate sentences (case/space-insensitive).
+    sentences = [s.strip() for s in _SENTENCE_SPLIT.split(value) if s.strip()]
+    deduped = []
+    last_key = None
+    for sentence in sentences:
+        key = re.sub(r"\s+", " ", sentence).lower().strip(" .!?।")
+        if key and key == last_key:
+            continue
+        deduped.append(sentence)
+        last_key = key
+    result = " ".join(deduped).strip()
+    # If the reply starts by quoting the prompt rather than answering, drop that clause.
+    result = re.sub(r"^(?:the user(?:'s)? name is|you are)\s+[^.]*\.\s*", "", result, flags=re.IGNORECASE)
+    return result.strip()
+
+
+def build_conversation(system_prompt: str, history, user_text: str) -> list:
+    """Build a role-separated message list from stored turns.
+
+    - roles are explicit (`user` / `assistant`), never baked into text
+    - adjacent duplicate turns are dropped
+    - the current user message is appended exactly once
+    - history that already contains the current message is not duplicated
+    """
+    messages = [{"role": "system", "content": system_prompt}]
+    last_key = None
+    current = (user_text or "").strip()
+    recent = list(history or [])[-12:]
+    for index, turn in enumerate(recent):
+        role = "assistant" if str(turn.get("role", "")).lower() in ("assistant", "bot") else "user"
+        text = str(turn.get("text") or "").strip()
+        if not text:
+            continue
+        # The active turn is appended once below; a stale copy in history is dropped.
+        if role == "user" and text == current and index == len(recent) - 1:
+            continue
+        key = (role, text)
+        if key == last_key:
+            continue
+        messages.append({"role": role, "content": text})
+        last_key = key
+    if current:
+        messages.append({"role": "user", "content": current})
+    return messages
 
 
 def _time_context() -> str:
@@ -27,15 +109,51 @@ def _time_context() -> str:
 class LLMService:
     def __init__(self):
         self.api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
-        print(f"DEBUG LLM: API Key Loaded? {bool(self.api_key)}")
         self.client = None
-        if self.api_key:
+        if not getattr(settings, "CLOUD_AI_ENABLED", True):
+            print("LLM: cloud disabled by CLOUD_AI_ENABLED=false (local-only mode)")
+            self.api_key = None
+        elif self.api_key:
             try:
                 self.client = Groq(api_key=self.api_key)
-                print("DEBUG LLM: Groq Client Initialized")
             except Exception as e:
-                print(f"DEBUG LLM: Failed to init Groq: {e}")
-        print(f"DEBUG LLM: Ollama enabled? {settings.OLLAMA_ENABLED} ({settings.OLLAMA_URL}/{settings.OLLAMA_MODEL})")
+                print(f"LLM: failed to initialise cloud client: {type(e).__name__}: {e}")
+        self._ollama_probe = (0.0, False)
+        print(f"LLM: local Ollama enabled={settings.OLLAMA_ENABLED} url={settings.OLLAMA_URL} model={settings.OLLAMA_MODEL}")
+        print(f"LLM: cloud provider configured={bool(self.client)}; local-first={self.local_first}")
+
+    @property
+    def local_first(self) -> bool:
+        """Prefer the local model unless explicitly configured otherwise."""
+        return bool(getattr(settings, "LOCAL_AI_FIRST", True))
+
+    def ollama_available(self, max_age: float = 15.0) -> bool:
+        """Fast, cached health probe so we don't wait 120s on an absent local server."""
+        if not settings.OLLAMA_ENABLED:
+            return False
+        checked_at, available = self._ollama_probe
+        if time.monotonic() - checked_at < max_age:
+            return available
+        ok = False
+        try:
+            r = requests.get(f"{settings.OLLAMA_URL.rstrip('/')}/api/tags", timeout=1.5)
+            ok = r.ok
+        except Exception:
+            ok = False
+        self._ollama_probe = (time.monotonic(), ok)
+        return ok
+
+    def provider_status(self) -> dict:
+        return {
+            "local_first": self.local_first,
+            "ollama": {
+                "enabled": bool(settings.OLLAMA_ENABLED),
+                "url": settings.OLLAMA_URL,
+                "model": settings.OLLAMA_MODEL,
+                "available": self.ollama_available(),
+            },
+            "cloud": {"configured": bool(self.client)},
+        }
 
     def _ollama_chat(self, messages: list, temperature: float, max_tokens: int) -> str:
         """Call the local Ollama OpenAI-compatible chat API without sending secrets."""
@@ -85,23 +203,34 @@ class LLMService:
                 has_image = context.get("has_image", False)
                 context_str = f"Memory: Name={name}, Relation={relation}, Notes={notes}, Location={location}, Has Audio={has_audio}, Has Image={has_image}"
             
+            # Keep retrieved context in the system message and the user's words in the
+            # user role. Never prefix user text with "User:" — that label leaks into
+            # some models' output and corrupts the answer.
             messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Context: {context_str}\n\nUser: {user_text}"}
+                {"role": "system", "content": f"{system_prompt}\n\nRETRIEVED CONTEXT: {context_str}"},
+                {"role": "user", "content": user_text},
             ]
-            
-            if self.client:
+
+            reply = ""
+            if self.local_first and self.ollama_available():
+                try:
+                    reply = self._ollama_chat(messages, temperature=0.7, max_tokens=100)
+                except Exception as e:
+                    print(f"[CHAT] local model error: {type(e).__name__}: {e}")
+            if not reply and self.client:
                 chat_completion = self.client.chat.completions.create(
                     messages=messages,
-                    model=settings.groq_llm_fallback_model,
+                    model=getattr(settings, "groq_llm_fallback_model", "llama-3.1-8b-instant"),
                     temperature=0.7,
                     max_tokens=100,
                 )
-                return chat_completion.choices[0].message.content
-            return self._ollama_chat(messages, temperature=0.7, max_tokens=100)
-            
+                reply = (chat_completion.choices[0].message.content or "").strip()
+            if not reply and not self.local_first:
+                reply = self._ollama_chat(messages, temperature=0.7, max_tokens=100)
+            reply = sanitize_reply(reply)
+            return reply or self._fallback_response(context)
+
         except Exception as e:
-            print(f"LLM Error: {e}")
             print(f"[CHAT] local/provider error: {type(e).__name__}: {e}")
             return self._fallback_response(context)
 
@@ -404,45 +533,58 @@ class LLMService:
             )
 
         # (5) Deeper memory — feed more of the recent conversation for context.
-        messages = [{"role": "system", "content": system_prompt}]
-        for h in (history or [])[-12:]:
-            role = "assistant" if h.get("role") in ("bot", "assistant") else "user"
-            text = (h.get("text") or "").strip()
-            if text:
-                messages.append({"role": role, "content": text})
-        messages.append({"role": "user", "content": user_text})
+        # Roles stay structured; labels are never baked into the text.
+        messages = build_conversation(system_prompt, history, user_text)
 
-        # (1) Smarter brain + (3) reliability: try the best model first, fall back
-        # to a faster one, so a single hiccup never blanks the conversation.
-        if self.client:
-            models = (
-                getattr(settings, "groq_llm_model", "llama-3.3-70b-versatile"),
-                getattr(settings, "groq_llm_fallback_model", "llama-3.1-8b-instant"),
-            )
-            for model in dict.fromkeys(models):
-                try:
-                    print(f"[CHAT] model: {model} (Groq)")
-                    completion = self.client.chat.completions.create(
-                        messages=messages,
-                        model=model,
-                        temperature=0.85,
-                        max_tokens=max_tokens,
-                    )
-                    reply = (completion.choices[0].message.content or "").strip()
-                    if reply:
-                        print(f"[CHAT] AI response: {reply[:500]}")
-                        return reply
-                except Exception as e:
-                    print(f"Persona Groq error on {model}: {e}")
+        # Local-first, then cloud (or the reverse when configured). A fast health
+        # probe prevents a 120s stall when Ollama is not running.
+        call_cloud = self._call_cloud
+        call_local = self._call_local
 
-        try:
-            print(f"[CHAT] model: {settings.OLLAMA_MODEL} (Ollama)")
-            reply = self._ollama_chat(messages, temperature=0.85, max_tokens=max_tokens)
-            if reply:
-                print(f"[CHAT] AI response: {reply[:500]}")
-                return reply
-        except Exception as e:
-            print(f"Persona Ollama error: {type(e).__name__}: {e}")
+        attempts = [call_local, call_cloud] if self.local_first else [call_cloud, call_local]
+        errors = []
+        for attempt in attempts:
+            try:
+                reply = attempt(messages, max_tokens)
+            except Exception as e:
+                errors.append(f"{type(e).__name__}: {e}")
+                continue
+            cleaned = sanitize_reply(reply)
+            if cleaned:
+                return cleaned
+        if errors:
+            print(f"[CHAT] all providers failed: {' | '.join(errors)}")
         raise RuntimeError("All configured chat providers failed")
+
+    def _call_local(self, messages: list, max_tokens: int) -> str:
+        if not self.ollama_available():
+            raise RuntimeError("Local Ollama is not reachable")
+        print(f"[CHAT] model: {settings.OLLAMA_MODEL} (local Ollama)")
+        return self._ollama_chat(messages, temperature=0.85, max_tokens=max_tokens)
+
+    def _call_cloud(self, messages: list, max_tokens: int) -> str:
+        if not self.client:
+            raise RuntimeError("Cloud model is not configured")
+        models = (
+            getattr(settings, "groq_llm_model", "llama-3.3-70b-versatile"),
+            getattr(settings, "groq_llm_fallback_model", "llama-3.1-8b-instant"),
+        )
+        last_error = None
+        for model in dict.fromkeys(models):
+            try:
+                print(f"[CHAT] model: {model} (cloud)")
+                completion = self.client.chat.completions.create(
+                    messages=messages,
+                    model=model,
+                    temperature=0.85,
+                    max_tokens=max_tokens,
+                )
+                reply = (completion.choices[0].message.content or "").strip()
+                if reply:
+                    return reply
+            except Exception as e:
+                last_error = e
+                print(f"[CHAT] cloud error on {model}: {type(e).__name__}: {e}")
+        raise RuntimeError(f"Cloud model failed: {last_error}")
 
 llm_service = LLMService()

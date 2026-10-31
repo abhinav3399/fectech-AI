@@ -38,14 +38,16 @@ export function FeedbackHost() {
         return () => { toastListeners.delete(l); confirmListener = null; };
     }, []);
 
+    function close(val) {
+        setDlg((d) => { if (d) d.resolve(val); return null; });
+    }
+
     useEffect(() => {
         if (!dlg) return;
         const onKey = (e) => { if (e.key === 'Escape') close(false); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [dlg]);
-
-    const close = (val) => { setDlg((d) => { if (d) d.resolve(val); return null; }); };
 
     return (
         <>

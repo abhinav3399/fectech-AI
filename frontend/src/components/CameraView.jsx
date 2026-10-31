@@ -8,23 +8,7 @@ export default function CameraView({ onCapture, isProcessing, trigger, isActive 
     const [stream, setStream] = useState(null);
     const [error, setError] = useState(null);
 
-    // Watch for external trigger
-    useEffect(() => {
-        if (trigger && trigger > 0 && isActive) {
-            capture();
-        }
-    }, [trigger, isActive]);
-
-    useEffect(() => {
-        if (isActive) {
-            startCamera();
-        } else {
-            stopCamera();
-        }
-        return () => stopCamera();
-    }, [isActive]);
-
-    const startCamera = async () => {
+    async function startCamera() {
         try {
             const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
             setStream(mediaStream);
@@ -35,16 +19,16 @@ export default function CameraView({ onCapture, isProcessing, trigger, isActive 
             setError("Could not access camera. Please allow permissions.");
             console.error(err);
         }
-    };
+    }
 
-    const stopCamera = () => {
+    function stopCamera() {
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
             setStream(null);
         }
-    };
+    }
 
-    const capture = () => {
+    function capture() {
         if (!videoRef.current || !canvasRef.current) return;
 
         // Ensure video is playing and has data
@@ -65,7 +49,26 @@ export default function CameraView({ onCapture, isProcessing, trigger, isActive 
                 console.error("Failed to create blob from canvas");
             }
         }, 'image/jpeg', 0.9);
-    };
+    }
+
+    // Watch for an external capture trigger.
+    useEffect(() => {
+        if (trigger && trigger > 0 && isActive) {
+            capture();
+        }
+    }, [trigger, isActive]);
+
+    useEffect(() => {
+        if (isActive) {
+            // Starts a MediaStream and stores it; this is an external-system
+            // subscription, not derived render state.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            startCamera();
+        } else {
+            stopCamera();
+        }
+        return () => stopCamera();
+    }, [isActive]);
 
     return (
         <div className="camera-container">

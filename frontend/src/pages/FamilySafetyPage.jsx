@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Plus, Trash2, Edit2, Save, X, Send, Phone, Mail, Shield, Clock, History, Users, ToggleLeft, CheckCircle2, XCircle } from 'lucide-react';
-import { getState } from '../lib/store';
+// store access for this page is via hooks below
 import '../styles/FamilySafety.css';
 import { API_BASE } from '../lib/apiConfig';
 

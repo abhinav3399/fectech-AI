@@ -33,6 +33,45 @@ const sampleQuality = async (dataUrl) => {
     }
 };
 
+// User-facing copy for the 3D pipeline's stable error codes. The backend sends a
+// code + message, so the UI can explain what actually failed instead of showing a
+// generic "Could not start generation".
+const GEN_ERROR_COPY = {
+    invalid_image: 'That photo could not be read. Choose a clear JPEG, PNG or WebP portrait.',
+    unsupported_format: 'That file type is not supported. Use a JPEG, PNG or WebP photo.',
+    image_too_small: 'That photo is too small. Use one at least 256×256 so the face has enough detail.',
+    image_too_large: 'That photo is too large. Use one under 8 MB and 6000px on the long edge.',
+    no_image: 'Choose or take a photo first.',
+    no_provider: 'No 3D provider is configured on the backend. Start the bundled local worker (start_local.bat) or set MODEL_3D_PROVIDER.',
+    worker_unreachable: 'The local 3D worker is not running. Start it with start_local.bat (port 8800), then try again.',
+    worker_timeout: 'The 3D worker timed out. It may still be starting — wait a moment and retry.',
+    worker_busy: 'The 3D worker is busy with another model. Wait for it to finish, then retry.',
+    worker_auth_failed: 'The 3D worker rejected its access token. Check LOCAL_WORKER_TOKEN on both services.',
+    worker_error: 'The 3D worker returned an error. Check its console output for details.',
+    model_missing: 'The 3D model files are missing on the worker. Reinstall model_service/models/face_landmarker.task.',
+    no_face_detected: 'No face was detected. Use a clear, front-facing, well-lit portrait with the whole face visible.',
+    out_of_memory: 'The device ran out of memory while building the model. Close other apps and retry with a smaller photo.',
+    generation_timeout: '3D generation timed out. Try again with a smaller, well-lit photo.',
+    task_lost: 'The 3D worker restarted and lost this job. Please generate again.',
+    invalid_asset: 'The worker produced an empty 3D file. Please retry.',
+    canceled: 'Generation was canceled.',
+    unauthorized: 'The 3D worker requires an access token. Set LOCAL_WORKER_TOKEN on the backend and worker.',
+};
+
+function generationErrorCopy(error) {
+    const data = error?.response?.data;
+    if (data?.code && GEN_ERROR_COPY[data.code]) return GEN_ERROR_COPY[data.code];
+    const raw = String(data?.message || data?.detail || error?.message || '');
+    if (/winerror 10061|connection refused|actively refused|all connection attempts failed|connecterror/i.test(raw)) {
+        return GEN_ERROR_COPY.worker_unreachable;
+    }
+    if (/not set up yet|no 3d provider/i.test(raw)) return GEN_ERROR_COPY.no_provider;
+    if (!error?.response) {
+        return 'Could not reach the Factech backend. Check the backend URL in Settings and that the server is running.';
+    }
+    return raw || '3D generation failed. Check the backend and worker logs, then retry.';
+}
+
 // Pick a neural voice that matches the person's language, gender + accent (also
 // seeds the clone direction). Manual voice choice still overrides this afterward.
 const pickVoice = (gender, accent, language) => {
@@ -80,8 +119,11 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
     const [cloning, setCloning] = useState({ active: false, error: null });
     const [faceImage, setFaceImage] = useState(initial?.faceImage || null);
     const [modelUrl, setModelUrl] = useState(initial?.modelUrl || null);
-    const [gen, setGen] = useState({ active: false, progress: 0, error: null });
+    const [gen, setGen] = useState({ active: false, progress: 0, stage: '', error: null, code: null });
+    const [provider, setProvider] = useState({ checking: true, ready: false, message: '', name: '' });
+    const [generationId, setGenerationId] = useState(null);
     const [printUrl, setPrintUrl] = useState(null); // printable STL url from the last generation
+    const cancelGenerationRef = useRef(false);
     const [capturing, setCapturing] = useState(false);
     const [voices, setVoices] = useState([]);
     const [previewing, setPreviewing] = useState(false);
@@ -108,6 +150,38 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
             setCloningAvailable(!!r.data?.cloning);
         }).catch(() => setVoices([]));
     }, []);
+
+    // Probe the 3D provider before offering generation, so the button cannot be
+    // pressed when the worker is down and the failure is explained up front.
+    const checkProvider = async () => {
+        setProvider((current) => ({ ...current, checking: true }));
+        try {
+            const response = await axios.get(`${API_BASE}/generate-3d/diagnostics`, { timeout: 8000 });
+            const data = response.data || {};
+            setProvider({
+                checking: false,
+                ready: !!data.ready,
+                name: data.provider || '',
+                message: data.ready
+                    ? (data.provider === 'local'
+                        ? `Local CPU worker ready${data.pipeline ? ` (pipeline ${data.pipeline})` : ''}.`
+                        : 'Hosted 3D provider ready.')
+                    : (data.message || 'The 3D provider is not ready.'),
+            });
+        } catch (error) {
+            setProvider({
+                checking: false,
+                ready: false,
+                name: '',
+                message: generationErrorCopy(error),
+            });
+        }
+    };
+
+    useEffect(() => {
+        if (tab === 'photo') checkProvider();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tab]);
 
     const previewVoice = async () => {
         setPreviewing(true);
@@ -186,55 +260,99 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
         const f = e.target.files?.[0];
         if (!f) return;
         if (!f.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+        // A new portrait invalidates any model still being built from the old one.
+        cancelGenerationRef.current = true;
+        setGenerationId(null);
+        setGen({ active: false, progress: 0, stage: '', error: null, code: null });
         setFaceImage(await blobToDataUrl(f));
         setModelUrl(null); // new face -> old 3D model no longer matches
         setPrintUrl(null);
         e.target.value = '';
     };
 
-    // Generate a 3D mesh from the face photo using the backend's configured provider.
+    const removeFaceImage = () => {
+        cancelGenerationRef.current = true;
+        setGenerationId(null);
+        setFaceImage(null);
+        setModelUrl(null);
+        setPrintUrl(null);
+        setGen({ active: false, progress: 0, stage: '', error: null, code: null });
+    };
+
+    // Generate a real 3D mesh from the face photo through the configured provider.
+    // Polls actual worker stages, supports cancellation, and maps failures to
+    // specific explanations instead of a generic message.
     const generate3D = async () => {
         if (!faceImage || gen.active) return;
-        setGen({ active: true, progress: 0, error: null });
-        try {
-            const sub = await axios.post(`${API_BASE}/generate-3d`, { image: faceImage }, { timeout: 60000 });
-            if (sub.data?.status !== 'submitted') {
-                const raw = sub.data?.message || 'Could not start generation.';
-                const message = /no 3d provider configured|not set up yet/i.test(raw)
-                    ? 'No 3D provider is configured. Run start_local.bat to use this PC’s local CPU model service, or configure a hosted provider on the backend.'
-                    : /all connection attempts failed|connect(?:ion)? refused/i.test(raw)
-                        ? 'The backend cannot reach its 3D worker. Start start_local.bat and check that the local worker on port 8800 is ready.'
-                        : raw;
-                setGen({ active: false, progress: 0, error: message });
-                return;
-            }
-            const taskId = sub.data.task_id;
-            for (let i = 0; i < 120; i++) { // poll up to ~8 min
-                await new Promise((r) => setTimeout(r, 4000));
-                const st = await axios.get(`${API_BASE}/generate-3d/${taskId}`, { timeout: 30000 });
-                const d = st.data || {};
-                if (d.status === 'SUCCEEDED') {
-                    setModelUrl(d.model_url);
-                    setPrintUrl(d.printable_url || null);
-                    setGen({ active: false, progress: 100, error: null });
-                    return;
-                }
-                if (['FAILED', 'CANCELED', 'error'].includes(d.status)) {
-                    setGen({ active: false, progress: 0, error: d.message || d.task_error?.message || '3D generation failed.' });
-                    return;
-                }
-                setGen({ active: true, progress: d.progress || 0, error: null });
-            }
-            setGen({ active: false, progress: 0, error: 'Timed out — please try again.' });
-        } catch (e) {
-            const raw = e.response?.data?.message || e.response?.data?.detail || e.message || 'Generation request failed.';
-            const msg = /no 3d provider configured|not set up yet/i.test(raw)
-                ? 'No 3D provider is configured. Run start_local.bat to use this PC’s local CPU model service, or configure a hosted provider on the backend.'
-                : /all connection attempts failed|connect(?:ion)? refused/i.test(raw)
-                    ? 'The backend cannot reach its 3D worker. Start start_local.bat and check that the local worker on port 8800 is ready.'
-                    : e.response ? raw : 'Could not reach the backend. Check its URL and VPN/network connection.';
-            setGen({ active: false, progress: 0, error: msg });
+        if (!provider.ready) {
+            setGen({ active: false, progress: 0, stage: '', error: provider.message || 'The 3D provider is not ready.', code: 'no_provider' });
+            return;
         }
+        cancelGenerationRef.current = false;
+        setGen({ active: true, progress: 0, stage: 'Starting the 3D worker', error: null, code: null });
+        try {
+            const submitted = await axios.post(`${API_BASE}/generate-3d`, { image: faceImage }, { timeout: 45000 });
+            if (submitted.data?.status !== 'submitted' || !submitted.data?.task_id) {
+                throw Object.assign(new Error('The backend did not accept the photo.'), {
+                    response: { data: submitted.data },
+                });
+            }
+            const taskId = submitted.data.task_id;
+            setGenerationId(taskId);
+            let consecutiveFailures = 0;
+            for (let attempt = 0; attempt < 180; attempt++) { // up to ~6 min at 2s
+                if (cancelGenerationRef.current) return;
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                if (cancelGenerationRef.current) return;
+                let data;
+                try {
+                    data = (await axios.get(`${API_BASE}/generate-3d/${taskId}`, { timeout: 15000 })).data || {};
+                    consecutiveFailures = 0;
+                } catch (pollError) {
+                    // A single transient blip should not abort a long CPU job.
+                    consecutiveFailures += 1;
+                    if (consecutiveFailures >= 3) throw pollError;
+                    continue;
+                }
+                if (data.status === 'SUCCEEDED' && data.model_url) {
+                    setModelUrl(data.model_url);
+                    setPrintUrl(data.printable_url || null);
+                    setGen({ active: false, progress: 100, stage: 'Complete', error: null, code: null });
+                    setGenerationId(null);
+                    return;
+                }
+                if (['FAILED', 'CANCELED', 'error'].includes(data.status)) {
+                    const message = GEN_ERROR_COPY[data.code] || data.message || data.task_error?.message || '3D generation failed.';
+                    setGen({ active: false, progress: 0, stage: '', error: message, code: data.code || null });
+                    setGenerationId(null);
+                    return;
+                }
+                setGen({
+                    active: true,
+                    progress: Math.max(0, Math.min(100, Number(data.progress) || 0)),
+                    stage: data.stage || (data.status === 'QUEUED' ? 'Waiting in the worker queue' : 'Reconstructing the face'),
+                    error: null,
+                    code: null,
+                });
+            }
+            setGen({ active: false, progress: 0, stage: '', error: GEN_ERROR_COPY.generation_timeout, code: 'generation_timeout' });
+        } catch (error) {
+            if (cancelGenerationRef.current) return;
+            setGen({ active: false, progress: 0, stage: '', error: generationErrorCopy(error), code: error?.response?.data?.code || null });
+        } finally {
+            setGenerationId(null);
+        }
+    };
+
+    const cancel3D = async () => {
+        cancelGenerationRef.current = true;
+        const taskId = generationId;
+        setGen((current) => ({ ...current, stage: 'Canceling…' }));
+        if (taskId) {
+            try { await axios.post(`${API_BASE}/generate-3d/${taskId}/cancel`, {}, { timeout: 8000 }); } catch { /* best effort */ }
+        }
+        setGenerationId(null);
+        setGen({ active: false, progress: 0, stage: '', error: GEN_ERROR_COPY.canceled, code: 'canceled' });
     };
 
     // Care-plan helpers: update a free-text field, add/remove a topic chip (de-duped).
@@ -487,7 +605,7 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
                         {faceImage ? (
                             <>
                                 <img src={faceImage} alt="their face" />
-                                <button type="button" className="pe-face-x" onClick={() => setFaceImage(null)} aria-label="Remove photo"><X size={14} /></button>
+                                <button type="button" className="pe-face-x" onClick={removeFaceImage} aria-label="Remove photo"><X size={14} /></button>
                             </>
                         ) : (
                             <User size={30} color="#475569" />
@@ -505,19 +623,61 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
                 </div>
                 {faceImage && (
                     <div className="pe-gen">
-                        <p className="pe-gen-note">The real photo is the faithful likeness. A 3D model is an <em>approximate</em> likeness built from one photo, so it won't match exactly. Use a clear, front-facing, well-lit photo. Generation uses the backend's configured 3D provider; the local CPU worker needs no Meshy key, Blender, or GPU.</p>
-                        <button type="button" className="pe-gen-btn" onClick={generate3D} disabled={gen.active}>
-                            <Box size={15} />
-                            {gen.active ? `Generating 3D model… ${gen.progress}%` : modelUrl ? 'Regenerate 3D model' : 'Generate 3D model from photo'}
-                        </button>
+                        <p className="pe-gen-note">The photo stays your faithful likeness. The 3D model is an <em>approximate</em> likeness reconstructed from one photo, so the sides and back it never saw are inferred. Use a clear, front-facing, well-lit portrait. Local reconstruction runs on the bundled CPU worker — no paid API, Meshy key, Blender or GPU.</p>
+
+                        <div className={`pe-provider ${provider.ready ? 'ready' : 'not-ready'}`}>
+                            <span className="pe-provider-dot" />
+                            <span>
+                                {provider.checking
+                                    ? 'Checking the 3D worker…'
+                                    : provider.ready
+                                        ? (provider.message || '3D worker ready.')
+                                        : (provider.message || 'The 3D worker is unavailable.')}
+                            </span>
+                            {!provider.checking && !provider.ready && (
+                                <button type="button" className="pe-provider-retry" onClick={checkProvider}>Recheck</button>
+                            )}
+                        </div>
+
+                        <div className="pe-gen-row">
+                            <button
+                                type="button"
+                                className="pe-gen-btn"
+                                onClick={generate3D}
+                                disabled={gen.active || provider.checking || !provider.ready}
+                                title={!provider.ready ? 'Start the local 3D worker to enable generation' : 'Build an approximate 3D model from this photo'}
+                            >
+                                <Box size={15} />
+                                {gen.active ? 'Generating…' : modelUrl ? 'Regenerate 3D model' : 'Generate 3D model from photo'}
+                            </button>
+                            {gen.active && (
+                                <button type="button" className="pe-gen-cancel" onClick={cancel3D}>Cancel</button>
+                            )}
+                        </div>
+
+                        {gen.active && (
+                            <div className="pe-gen-progress" role="status" aria-live="polite">
+                                <div className="pe-gen-stage">
+                                    <span>{gen.stage || 'Reconstructing the face'}</span>
+                                    <span>{gen.progress}%</span>
+                                </div>
+                                <div className="pe-gen-bar"><i style={{ width: `${Math.max(3, gen.progress)}%` }} /></div>
+                            </div>
+                        )}
                         {modelUrl && !gen.active && <span className="pe-hint">✓ 3D model ready</span>}
                         {printUrl && !gen.active && (
                             <a className="pe-gen-print" href={printUrl} target="_blank" rel="noreferrer">
                                 <Box size={14} /> Download for 3D printing (STL)
                             </a>
                         )}
-                        {gen.active && <div className="pe-gen-bar"><i style={{ width: `${Math.max(5, gen.progress)}%` }} /></div>}
-                        {gen.error && <div className="pe-gen-err">{gen.error}</div>}
+                        {gen.error && !gen.active && (
+                            <div className="pe-gen-error-block">
+                                <div className="pe-gen-err">{gen.error}</div>
+                                {provider.ready && gen.code !== 'invalid_image' && gen.code !== 'unsupported_format' && (
+                                    <button type="button" className="pe-gen-retry" onClick={generate3D}>Try again</button>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -599,7 +759,15 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
 
             {capturing && (
                 <FaceCaptureModal
-                    onCapture={(img) => { setFaceImage(img); setModelUrl(null); setPrintUrl(null); setCapturing(false); }}
+                    onCapture={(img) => {
+                        cancelGenerationRef.current = true;
+                        setGenerationId(null);
+                        setGen({ active: false, progress: 0, stage: '', error: null, code: null });
+                        setFaceImage(img);
+                        setModelUrl(null);
+                        setPrintUrl(null);
+                        setCapturing(false);
+                    }}
                     onClose={() => setCapturing(false)}
                 />
             )}
@@ -726,6 +894,39 @@ export default function PersonaEditor({ initial, onSave, onCancel, saveLabel = '
         .pe-gen-err { font-size: var(--fs-sm); color: var(--danger); line-height: 1.4; }
         .pe-gen-note { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin: 0 0 var(--s-1); }
         .pe-gen-note em { font-style: normal; color: var(--text-dim); }
+        .pe-gen-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+        .pe-provider {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            font-size: var(--fs-xs); line-height: 1.4; padding: 8px 10px;
+            border-radius: var(--r-sm); border: 1px solid var(--border);
+            background: var(--surface-2); color: var(--text-muted);
+        }
+        .pe-provider-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--text-dim); }
+        .pe-provider.ready { border-color: rgba(34,211,238,0.32); color: var(--text); }
+        .pe-provider.ready .pe-provider-dot { background: var(--success); box-shadow: 0 0 7px var(--success); }
+        .pe-provider.not-ready { border-color: rgba(251,191,36,0.32); }
+        .pe-provider.not-ready .pe-provider-dot { background: var(--warning); box-shadow: 0 0 7px var(--warning); }
+        .pe-provider-retry {
+            margin-left: auto; background: transparent; border: 1px solid var(--border);
+            color: var(--text); border-radius: var(--r-pill); padding: 3px 10px;
+            font-size: var(--fs-xs); font-weight: 700; cursor: pointer;
+        }
+        .pe-provider-retry:hover { background: var(--surface-3); }
+        .pe-gen-cancel {
+            background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+            border-radius: var(--r-sm); padding: 9px 14px; font-size: var(--fs-sm);
+            font-weight: 700; cursor: pointer;
+        }
+        .pe-gen-cancel:hover { background: var(--surface-3); }
+        .pe-gen-progress { display: flex; flex-direction: column; gap: 6px; }
+        .pe-gen-stage { display: flex; justify-content: space-between; gap: var(--s-3); font-size: var(--fs-xs); color: var(--text-muted); }
+        .pe-gen-error-block { display: flex; flex-direction: column; gap: var(--s-2); align-items: flex-start; }
+        .pe-gen-retry {
+            background: rgba(139,92,246,0.14); border: 1px solid rgba(139,92,246,0.32);
+            color: var(--text); border-radius: var(--r-pill); padding: 5px 12px;
+            font-size: var(--fs-xs); font-weight: 700; cursor: pointer;
+        }
+        .pe-gen-retry:hover { background: rgba(139,92,246,0.26); }
         .pe-gen-print {
             display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;
             padding: 9px 15px; border-radius: var(--r-md); text-decoration: none; font-weight: 600; font-size: var(--fs-sm);

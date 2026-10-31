@@ -94,7 +94,7 @@ export class MediaPipeFaceMeshProvider extends FaceMeshProvider {
         if (this._rafId) cancelAnimationFrame(this._rafId);
         this._rafId = null;
         if (this._landmarker) {
-            try { this._landmarker.close(); } catch (_) {}
+            try { this._landmarker.close(); } catch (_) { /* already closed */ }
             this._landmarker = null;
         }
         this._smoothed = null;

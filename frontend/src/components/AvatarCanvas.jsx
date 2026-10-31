@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const AvatarCanvas = ({ isSpeaking, isProcessing, message, processingStatus }) => {
+const AvatarCanvas = ({ isSpeaking, isProcessing, message }) => {
     // Logic:
     // Idle/Loading (No Text) -> idle.gif (Phone)
     // Speaking (Text Loaded) -> speaking.gif (Mic)

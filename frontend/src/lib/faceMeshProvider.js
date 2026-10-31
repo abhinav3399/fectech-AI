@@ -15,7 +15,7 @@
 
 export class FaceMeshProvider {
     /** @param {HTMLVideoElement} videoEl */
-    async start(videoEl) {
+    async start(_videoEl) {
         throw new Error('FaceMeshProvider.start() must be implemented');
     }
 

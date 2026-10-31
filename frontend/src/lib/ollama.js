@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { sanitizeReply, isPromptEcho, normalizeUserText } from './chatText';
 
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 export const DEFAULT_OLLAMA_MODEL = 'llama3.2:3b';
@@ -115,13 +116,24 @@ export async function generateOllamaReply({
         memoryText ? `Relevant shared memories: ${memoryText}` : '',
         ...careLines,
     ].filter(Boolean).join('\n');
+    const clean = normalizeUserText(text, 4000);
+    if (!clean) throw new Error('Empty message.');
+    const historyMessages = [];
+    let lastKey = null;
+    for (const turn of history.slice(-8)) {
+        const content = normalizeUserText(turn?.text, 2000);
+        if (!content) continue;
+        const role = turn?.role === 'bot' || turn?.role === 'assistant' ? 'assistant' : 'user';
+        const key = `${role}:${content}`;
+        if (key === lastKey) continue;
+        if (role === 'user' && content === clean) continue;
+        historyMessages.push({ role, content });
+        lastKey = key;
+    }
     const messages = [
         { role: 'system', content: system },
-        ...history.slice(-8).map((turn) => ({
-            role: turn?.role === 'bot' || turn?.role === 'assistant' ? 'assistant' : 'user',
-            content: String(turn?.text || '').trim(),
-        })).filter((turn) => turn.content),
-        { role: 'user', content: String(text || '').trim() },
+        ...historyMessages,
+        { role: 'user', content: clean },
     ];
 
     const data = await requestJson({
@@ -135,7 +147,9 @@ export async function generateOllamaReply({
         },
         timeout: 120000,
     });
-    const reply = data?.message?.content?.trim();
-    if (!reply) throw new Error('Ollama returned an empty response.');
+    const reply = sanitizeReply(data?.message?.content);
+    if (!reply || isPromptEcho(reply)) {
+        throw new Error('The local model returned an unusable reply. Try rephrasing your message.');
+    }
     return reply;
 }

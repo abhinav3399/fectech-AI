@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://127.0.0.1:11434"
     OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_ENABLED: bool = True
+    # Local-first: use the on-machine Ollama model when it is running, and only
+    # fall back to a cloud provider when local inference is unavailable.
+    LOCAL_AI_FIRST: bool = True
+    # Hard off-switch for cloud chat. Set false for a genuinely local-only install;
+    # the backend then never constructs or calls a cloud client.
+    CLOUD_AI_ENABLED: bool = True
     MESHY_API_KEY: Optional[str] = None
     ELEVENLABS_API_KEY: Optional[str] = None
 
@@ -40,13 +46,18 @@ class Settings(BaseSettings):
     TIMEZONE: str = "Asia/Kolkata"
 
     # --- Photo -> 3D engine (pluggable behind app/services/mesh_service.py) ---
-    # "auto" picks the first configured provider; or force one: meshy | replicate | local.
-    MODEL_3D_PROVIDER: str = "auto"
-    # Replicate (hosted, pay-per-use, no local GPU). Token from replicate.com.
+    # Local-first by default: the bundled CPU worker needs no account, key or GPU.
+    MODEL_3D_PROVIDER: str = "local"
+    # Hosted options remain available if explicitly configured.
     REPLICATE_API_TOKEN: Optional[str] = None
     REPLICATE_3D_MODEL: str = "ndreca/hunyuan3d-2"
-    # Your own self-hosted GPU service (submit/poll). e.g. http://127.0.0.1:8800
-    MODEL_3D_URL: Optional[str] = None
+    # The bundled local worker (model_service/) listens here by default.
+    MODEL_3D_URL: Optional[str] = "http://127.0.0.1:8800"
+    # Max seconds the backend waits for a worker status call.
+    MODEL_3D_TIMEOUT: int = 45
+    # Optional shared secret for the local workers. When set, the backend sends
+    # it as X-Local-Token and the worker requires it on every request.
+    LOCAL_WORKER_TOKEN: Optional[str] = None
 
     # --- Voice cloning engine (pluggable behind app/services/voice_clone_service.py) ---
     # "auto" = ElevenLabs if ELEVENLABS_API_KEY is set, else the local XTTS worker

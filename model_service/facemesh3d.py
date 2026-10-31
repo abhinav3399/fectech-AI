@@ -11,7 +11,7 @@ import numpy as np
 import trimesh
 from PIL import Image
 from scipy.spatial import Delaunay
-from .texture import bright_textured
+from .texture import bright_textured, solid_skin
 import mediapipe as mp
 from mediapipe.tasks import python as mptask
 from mediapipe.tasks.python import vision
@@ -162,22 +162,23 @@ def _inject_mouth_extras(glb_path, mouth, mesh_name=None):
 
 
 def _teeth_texture(size=128):
-    """A small, vertically-SYMMETRIC teeth/gum strip (symmetry makes UV flip
-    irrelevant): a dark-but-not-black gap line in the middle, enamel-white teeth
-    above & below it, soft-pink gums at the edges, faint vertical tooth lines."""
+    """Create a recessed mouth cavity with a restrained upper teeth strip.
+
+    The photographic lips remain the identity surface. The card behind them must
+    never appear as a large white rectangle when the mouth is at rest.
+    """
     from PIL import Image
     h = w = size
     arr = np.zeros((h, w, 3), np.uint8)
-    t = np.abs((np.arange(h) - (h - 1) / 2.0) / ((h - 1) / 2.0))   # 0 centre -> 1 edges
+    rows = np.arange(h) / max(h - 1, 1)
     for i in range(h):
-        ti = t[i]
-        if ti < 0.07:
-            arr[i, :] = (78, 40, 44)        # mouth-gap shadow (dark maroon, never black)
-        elif ti < 0.60:
-            arr[i, :] = (240, 235, 226)     # enamel white
+        if rows[i] < 0.34:
+            arr[i, :] = (224, 218, 207)     # restrained upper teeth
+        elif rows[i] < 0.48:
+            arr[i, :] = (150, 78, 82)       # gum transition
         else:
-            arr[i, :] = (208, 120, 122)     # pink gum
-    band = (t >= 0.07) & (t < 0.60)
+            arr[i, :] = (48, 22, 27)        # recessed lower cavity
+    band = (rows >= 0.05) & (rows < 0.34)
     for c in range(0, w, max(1, w // 8)):
         arr[band, c] = (212, 206, 196)      # faint tooth separations
     return Image.fromarray(arr, "RGB")
@@ -191,9 +192,9 @@ def _build_inner_mouth(verts, inner_idx):
     cx, cy = float(P[:, 0].mean()), float(P[:, 1].mean())
     w = float(P[:, 0].max() - P[:, 0].min())
     hgt = max(float(P[:, 1].max() - P[:, 1].min()), 3.0)
-    half_w = max(w * 0.60, 6.0)
-    top = cy + hgt * 0.70
-    bot = cy - (hgt * 0.70 + 9.0)                       # extend down to back an OPEN mouth
+    half_w = max(w * 0.43, 4.0)
+    top = cy + hgt * 0.38
+    bot = cy - hgt * 0.42
     z_back = float(P[:, 2].min()) - 4.0                 # recessed behind the lips
     nx, ny = 14, 12
     gx, gy = np.meshgrid(np.linspace(cx - half_w, cx + half_w, nx),
@@ -227,7 +228,14 @@ def _hair_color(arr, P):
     # Bias to the DARKER half of the patch — that's the hair, not skin/background highlights.
     lum = patch.mean(axis=1)
     dark = patch[lum <= np.median(lum)]
-    return tuple(int(c) for c in np.median(dark if len(dark) else patch, axis=0))
+    sample = dark if len(dark) else patch
+    color = tuple(int(c) for c in np.median(sample, axis=0))
+    # A light brown/skin-colored sample is usually forehead or background, not
+    # hair. Do not invent a floating cap when the source photo has no reliable
+    # hair region; the continuous skin volume is the safer reconstruction.
+    if float(np.mean(color)) > 108:
+        return None
+    return color
 
 
 def _build_hair_cap(verts, P, img):
@@ -279,39 +287,77 @@ def _skin_color(img, P):
 
 
 def _solid_geometry(vertices, faces, color):
-    """Create a non-textured hidden-head component with the same emissive material."""
+    """Create a neutral, non-metallic material for reconstructed surfaces."""
     return trimesh.Trimesh(
         vertices=vertices, faces=faces,
-        visual=bright_textured(None, Image.new("RGB", (8, 8), color)), process=False)
+        visual=solid_skin(color), process=False)
+
+
+def _ring_surface(levels, segments=48):
+    """Build a smooth anatomical volume from horizontal skull/neck rings.
+
+    The rings deliberately taper through the jaw, temples, crown, and neck rather
+    than using a sphere.  The back is therefore continuous and coherent when the
+    model is orbit-rotated, while the landmark face remains the identity-bearing
+    front surface.
+    """
+    vertices = []
+    for y, rx, rz, zc in levels:
+        for i in range(segments):
+            angle = 2.0 * np.pi * i / segments
+            vertices.append((rx * np.cos(angle), y, zc + rz * np.sin(angle)))
+    faces = []
+    for row in range(len(levels) - 1):
+        start = row * segments
+        nxt = (row + 1) * segments
+        for i in range(segments):
+            j = (i + 1) % segments
+            faces.extend(((start + i, nxt + i, nxt + j),
+                          (start + i, nxt + j, start + j)))
+    for i in range(1, segments - 1):
+        faces.append((0, i + 1, i))
+        top = (len(levels) - 1) * segments
+        faces.append((top, top + i, top + i + 1))
+    return np.asarray(vertices, dtype=np.float64), np.asarray(faces, dtype=np.int64)
 
 
 def _build_head_volume(img, P, face_width_mm, face_height_mm):
-    """Build plausible unseen head volume behind the identity-preserving face shell.
+    """Build a coherent unseen head, ears, and neck behind the identity shell.
 
     A single image cannot reveal the back of a head. This component deliberately uses
     smooth, neutral anatomy there instead of pretending the front texture is known on
     hidden surfaces.
     """
     skin = _skin_color(img, P)
-    head = trimesh.creation.uv_sphere(radius=1.0, count=[32, 20])
-    head.vertices *= np.array([face_width_mm * 0.58, face_height_mm * 0.68, face_width_mm * 0.48])
-    head.vertices[:, 2] -= face_width_mm * 0.44
-    head.vertices[:, 1] -= face_height_mm * 0.02
-    parts = [_solid_geometry(head.vertices, head.faces, skin)]
+    # y is vertical and +z faces the camera. Keep the reconstructed volume
+    # decisively behind the landmark shell; the photo carries the identity
+    # features and must never be occluded by neutral skin.
+    levels = [
+        (-face_height_mm * 0.78, face_width_mm * 0.24, face_width_mm * 0.22, -face_width_mm * 0.45),
+        (-face_height_mm * 0.58, face_width_mm * 0.38, face_width_mm * 0.31, -face_width_mm * 0.45),
+        (-face_height_mm * 0.32, face_width_mm * 0.48, face_width_mm * 0.40, -face_width_mm * 0.45),
+        ( face_height_mm * 0.04, face_width_mm * 0.54, face_width_mm * 0.46, -face_width_mm * 0.45),
+        ( face_height_mm * 0.38, face_width_mm * 0.52, face_width_mm * 0.44, -face_width_mm * 0.44),
+        ( face_height_mm * 0.67, face_width_mm * 0.43, face_width_mm * 0.37, -face_width_mm * 0.44),
+        ( face_height_mm * 0.86, face_width_mm * 0.25, face_width_mm * 0.25, -face_width_mm * 0.43),
+    ]
+    hv, hf = _ring_surface(levels)
+    parts = [_solid_geometry(hv, hf, skin)]
 
-    # Ears and a short neck transition are separate smooth volumes, not photo-colored blobs.
+    # Ears and neck are connected at the same scale as the skull, not photo blobs.
     for side in (-1, 1):
-        ear = trimesh.creation.uv_sphere(radius=1.0, count=[16, 10])
-        ear.vertices *= np.array([face_width_mm * 0.105, face_height_mm * 0.22, face_width_mm * 0.10])
+        ear = trimesh.creation.uv_sphere(radius=1.0, count=[20, 12])
+        ear.vertices *= np.array([face_width_mm * 0.105, face_height_mm * 0.20, face_width_mm * 0.09])
         ear.vertices[:, 0] += side * face_width_mm * 0.52
-        ear.vertices[:, 1] -= face_height_mm * 0.02
-        ear.vertices[:, 2] -= face_width_mm * 0.28
+        ear.vertices[:, 1] += face_height_mm * 0.02
+        ear.vertices[:, 2] -= face_width_mm * 0.32
         parts.append(_solid_geometry(ear.vertices, ear.faces, skin))
 
     neck = trimesh.creation.cylinder(
-        radius=face_width_mm * 0.27, height=face_height_mm * 0.42, sections=32)
-    neck.vertices[:, 1] -= face_height_mm * 0.78
-    neck.vertices[:, 2] -= face_width_mm * 0.34
+        radius=face_width_mm * 0.26, height=face_height_mm * 0.48, sections=40)
+    neck.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+    neck.vertices[:, 1] -= face_height_mm * 0.62
+    neck.vertices[:, 2] -= face_width_mm * 0.38
     parts.append(_solid_geometry(neck.vertices, neck.faces, skin))
     return parts
 

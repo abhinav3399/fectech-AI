@@ -32,7 +32,7 @@ function App() {
     const setupBackButton = async () => {
       try {
         const { App: CapApp } = await import('@capacitor/app');
-        const handle = await CapApp.addListener('backButton', ({ canGoBack }) => {
+        const handle = await CapApp.addListener('backButton', () => {
           if (view !== 'home') {
             setView('home');
           } else {

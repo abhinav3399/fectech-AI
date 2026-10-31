@@ -10,10 +10,12 @@ import { API_BASE } from '../lib/apiConfig';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { Capacitor } from '@capacitor/core';
 import { generateOfflineReply } from '../lib/offlineAi';
-import { DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, generateOllamaReply, isNativeCapacitor } from '../lib/ollama';
+import { DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, generateOllamaReply } from '../lib/ollama';
 import { attachAudio } from '../lib/audiolevel';
 import { startProsody, stopProsody, getProsody, resetProsodyWindow } from '../lib/prosody';
 import { scoreDistress } from '../lib/distress';
+import { sanitizeReply, isEchoOfSpoken, normalizeUserText, isDuplicateTranscript } from '../lib/chatText';
+import { hasNativeSpeech, nativeSpeechAvailable, ensureMicPermission, startNativeRecognition } from '../lib/nativeSpeech';
 
 // Split a reply into sentence-ish chunks so TTS can play the first words fast and stream the
 // rest. Handles ., !, ?, and the Hindi danda (।); merges ultra-short fragments into the prior chunk.
@@ -56,6 +58,9 @@ export default function AvatarPage() {
     const scrollRef = useRef(null);
     const audioRef = useRef(null);
     const recognitionRef = useRef(null);
+    const nativeRecRef = useRef(null);   // Android SpeechRecognizer session handle
+    const turnInFlightRef = useRef(false); // hard guard against duplicate submissions
+    const lastHeardRef = useRef({ text: '', at: 0 }); // duplicate transcript suppression
     const callModeRef = useRef(false);   // mirror of callMode for async callbacks
     const messagesRef = useRef([]);      // latest messages (avoid stale-closure history)
     const busyRef = useRef(false);       // thinking or speaking -> ignore the mic
@@ -116,6 +121,8 @@ export default function AvatarPage() {
         speakIdRef.current += 1;
         try { ttsAbortRef.current?.abort(); } catch (e) { /* noop */ }
         try { recognitionRef.current?.stop(); } catch (e) { /* noop */ }
+        try { nativeRecRef.current?.cancel(); } catch (e) { /* noop */ }
+        nativeRecRef.current = null;
         window.speechSynthesis?.cancel();
         if (Capacitor.isNativePlatform()) TextToSpeech.stop().catch(() => {});
     }, []);
@@ -149,6 +156,18 @@ export default function AvatarPage() {
 
     // Keep a live ref of messages so async voice callbacks send real history.
     useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+    // Clearing history in Settings must clear the live chat too, not just storage.
+    useEffect(() => {
+        const onCleared = () => {
+            setMessages([]);
+            flushedCountRef.current = 0;
+            lastHeardRef.current = { text: '', at: 0 };
+            lastActivityRef.current = Date.now();
+        };
+        window.addEventListener('factech:conversation-cleared', onCleared);
+        return () => window.removeEventListener('factech:conversation-cleared', onCleared);
+    }, []);
 
     // Proactive companion: if the patient goes quiet (including on first open), the
     // companion GENTLY starts the conversation with an in-character, time-aware opener
@@ -349,16 +368,17 @@ export default function AvatarPage() {
 
     // One conversational turn: user text -> persona reply -> speak it.
     const runTurn = async (text) => {
-        const q = (text ?? '').trim();
-        if (!q) return;
+        const q = normalizeUserText(text);
+        // A typed send and a speech result can race. Only one turn may be in flight,
+        // otherwise the same message is submitted twice and appears twice.
+        if (!q || turnInFlightRef.current) return;
+        turnInFlightRef.current = true;
         busyRef.current = true; // block the mic until we've finished replying + speaking
         lastActivityRef.current = Date.now();
         userSpokeRef.current = true; // the user has engaged -> proactive check-in now allowed
         nudgeCountRef.current = 0; // user responded -> allow future proactive check-ins
         const history = messagesRef.current.slice(-8);
-        console.info('[CHAT] user message:', q);
-        console.info('[CHAT] conversation ID:', conversationIdRef.current);
-        console.info('[CHAT] API endpoint:', `${API_BASE}/persona/chat`);
+        console.info('[CHAT] turn started', { chars: q.length, history: history.length });
         setMessages((p) => [...p, { role: 'user', text: q }]);
         addTurn('user', q); // persist for the wellbeing evaluation
         setIsThinking(true);
@@ -406,33 +426,38 @@ export default function AvatarPage() {
             } else if (aiMode === 'online') {
                 reply = await askBackend(30000);
             } else {
-                // On Android, first use a phone-local Ollama-compatible runtime. Native HTTP
-                // bypasses WebView CORS and localhost correctly resolves to the phone itself.
-                if (isNativeCapacitor()) {
-                    try { reply = await generateOllamaReply(ollamaOptions); }
-                    catch (localError) { console.info('[CHAT] phone-local Ollama unavailable; falling back:', localError.message); }
-                }
-                // The API's baked-in LAN address may be unreachable away from home Wi-Fi, so
-                // keep the auto-mode network attempt short and continue to local inference.
+                // Local-first: try the on-machine Ollama server first (it fails fast
+                // when nothing is listening). On Android this is a phone-local runtime;
+                // on desktop it is the local machine.
+                try { reply = await generateOllamaReply(ollamaOptions); }
+                catch (localError) { console.info('[CHAT] local Ollama unavailable:', localError.message); }
+
+                // Then the Factech backend (which is itself local-first). Give a real
+                // CPU model time to answer: a 5s cap was silently pushing normal
+                // replies onto the tiny offline model, which produced garbled text.
                 if (!reply && navigator.onLine) {
-                    try { reply = await askBackend(5000); }
+                    try { reply = await askBackend(45000); }
                     catch (networkError) { console.info('[CHAT] backend unavailable; falling back:', networkError.message); }
                 }
+
+                // Last resort: the downloaded on-device model. Only reached when both
+                // local server and backend genuinely failed.
                 if (!reply) {
                     try { reply = await generateOfflineReply({ text: q, persona, memories, history }); }
                     catch (offlineError) {
-                        throw new Error(`Online AI is unavailable and the offline model could not start (${offlineError.message}). Connect once to download the offline model, then try again.`);
+                        throw new Error(`No AI service answered. The local Ollama server and backend are unavailable, and the on-device model could not start (${offlineError.message}). Connect once to download it, or choose Online in Settings.`);
                     }
                 }
             }
-            if (!reply) throw new Error('AI service returned an empty response');
-            console.info('[CHAT] AI response:', reply);
-            setMessages((p) => [...p, { role: 'bot', text: reply }]);
-            addTurn('bot', reply);
+            const cleanReply = sanitizeReply(reply);
+            if (!cleanReply) throw new Error('AI service returned an empty response');
+            console.info('[CHAT] reply received', { chars: cleanReply.length });
+            setMessages((p) => [...p, { role: 'bot', text: cleanReply }]);
+            addTurn('bot', cleanReply);
             setIsThinking(false);
             // Live mic conversation needs to be snappy -> fast neural voice; a typed chat reply can
             // wait for the richer cloned voice. In calm-mode, slow the delivery for a soothing tone.
-            speak(reply, { preferFast: callModeRef.current, rate: calmRef.current ? '-18%' : null }); // busyRef stays true until afterSpeak
+            speak(cleanReply, { preferFast: callModeRef.current, rate: calmRef.current ? '-18%' : null }); // busyRef stays true until afterSpeak
         } catch (e) {
             const detail = e.response?.data?.detail;
             const aiMode = settings.aiMode || 'auto';
@@ -443,11 +468,13 @@ export default function AvatarPage() {
                     : aiMode === 'online'
                         ? (typeof detail === 'string' ? detail : 'Online AI service unavailable. Check the backend address or choose Auto for local fallback.')
                         : (typeof detail === 'string' ? detail : e.message || 'AI service unavailable. Please try again.');
-            console.error('[CHAT] request failed:', e.message);
+            console.error('[CHAT] request failed:', e.response?.status || e.name || 'network');
             setMessages((p) => [...p, { role: 'bot', text: errorText }]);
             setIsThinking(false);
             busyRef.current = false;
             if (callModeRef.current) setTimeout(() => startListenRef.current?.(), 500);
+        } finally {
+            turnInFlightRef.current = false;
         }
     };
 
@@ -494,9 +521,70 @@ export default function AvatarPage() {
         if (callModeRef.current && !busyRef.current) setTimeout(() => startListenRef.current?.(), ms);
     };
 
-    const startListening = () => {
+    // One place decides whether a transcript should start a turn. It suppresses
+    // empty results, the avatar's own echo, and the same transcript arriving twice.
+    const acceptTranscript = (raw) => {
+        const t = normalizeUserText(raw, 600);
+        setListening(false);
+        if (busyRef.current) { restartSoon(300); return; }
+        if (t.length < 2) { restartSoon(300); return; }
+        const now = Date.now();
+        if (isDuplicateTranscript(t, lastHeardRef.current, now)) return;
+        if (isEchoOfSpoken(t, lastSpokenRef.current)) { restartSoon(300); return; }
+        lastHeardRef.current = { text: t, at: now };
+        runTurn(t);
+    };
+
+    const startListening = async () => {
         // Never run two recognizers, and never listen while we're talking/thinking.
-        if (!SpeechRec || !callModeRef.current || busyRef.current) return;
+        if (!callModeRef.current || busyRef.current) return;
+
+        // Android WebView: use the native SpeechRecognizer plugin. webkitSpeechRecognition
+        // does not exist in a Capacitor WebView, which is why voice previously failed.
+        if (hasNativeSpeech()) {
+            if (nativeRecRef.current) return;
+            try {
+                const allowed = await ensureMicPermission();
+                if (!allowed) {
+                    setVoiceError('Microphone permission was blocked. Allow microphone access for Factech AI to talk live.');
+                    endCall();
+                    return;
+                }
+                const available = await nativeSpeechAvailable();
+                if (!available) {
+                    setVoiceError('Speech recognition is not available on this device. Install/enable Google app speech services, or type your message.');
+                    return;
+                }
+                const handle = await startNativeRecognition({
+                    language: sttLang,
+                    onResult: (text) => { nativeRecRef.current = null; acceptTranscript(text); },
+                    onError: (error) => {
+                        nativeRecRef.current = null;
+                        setListening(false);
+                        if (['not-allowed', 'insufficient-permissions'].includes(error)) {
+                            setVoiceError('Microphone permission was blocked. Allow microphone access for Factech AI to talk live.');
+                            endCall();
+                        } else if (['no-speech', 'aborted', 'busy', 'network'].includes(error)) {
+                            restartSoon(600);
+                        } else {
+                            console.warn('[VOICE] native speech error', error);
+                            restartSoon(800);
+                        }
+                    },
+                    onEnd: () => { nativeRecRef.current = null; setListening(false); restartSoon(500); },
+                });
+                nativeRecRef.current = handle;
+                setListening(true);
+            } catch (error) {
+                nativeRecRef.current = null;
+                setListening(false);
+                console.warn('[VOICE] could not start native speech', error?.message || error);
+                setVoiceError('Could not start the microphone. Check that microphone permission is allowed.');
+            }
+            return;
+        }
+
+        if (!SpeechRec) return;
         try { recognitionRef.current?.abort(); } catch (e) { /* noop */ }
         try {
             const rec = new SpeechRec();
@@ -504,16 +592,7 @@ export default function AvatarPage() {
             rec.interimResults = false;
             rec.continuous = false;
             rec.maxAlternatives = 1;
-            rec.onresult = (e) => {
-                const t = (e.results?.[0]?.[0]?.transcript || '').trim();
-                setListening(false);
-                if (busyRef.current) return;                 // ignore mic while busy (echo guard)
-                if (t.length < 2) { restartSoon(300); return; }
-                // Skip if it's basically an echo of what the avatar just said.
-                const last = lastSpokenRef.current;
-                if (last && t.length < 30 && last.includes(t.toLowerCase())) { restartSoon(300); return; }
-                runTurn(t);
-            };
+            rec.onresult = (e) => acceptTranscript(e.results?.[0]?.[0]?.transcript || '');
             rec.onerror = (e) => {
                 setListening(false);
                 if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -536,8 +615,8 @@ export default function AvatarPage() {
 
     const startCall = () => {
         setVoiceError(null);
-        if (!SpeechRec) {
-            setVoiceError('Live voice needs Google Chrome or Microsoft Edge.');
+        if (!SpeechRec && !hasNativeSpeech()) {
+            setVoiceError('Live voice needs Google Chrome, Microsoft Edge, or the Android app.');
             return;
         }
         busyRef.current = false;
@@ -556,6 +635,8 @@ export default function AvatarPage() {
         setCallMode(false);
         setListening(false);
         try { recognitionRef.current?.abort(); } catch (e) { /* noop */ }
+        try { nativeRecRef.current?.cancel(); } catch (e) { /* noop */ }
+        nativeRecRef.current = null;
         try { stopProsody(); } catch (e) { /* noop */ }
         calmRef.current = false; distressRef.current = 0; distressStreakRef.current = 0;
         window.speechSynthesis?.cancel();
@@ -862,7 +943,10 @@ export default function AvatarPage() {
             color: var(--text);
         }
         .av-stage { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; overflow: hidden; }
-        .av-caption { position: absolute; bottom: var(--s-8); left: 0; right: 0; text-align: center; pointer-events: none; }
+        /* Reserve a presentation-safe footer so identity/status never sits on the
+           avatar's shoulders or face. The renderer remains full-width above it. */
+        .av-stage > div:first-child { height: calc(100% - 156px) !important; }
+        .av-caption { position: absolute; bottom: 30px; left: 0; right: 0; z-index: 8; text-align: center; pointer-events: none; }
         .av-name { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: -0.01em; color: var(--text); text-shadow: 0 2px 14px rgba(0,0,0,0.18); }
         .av-rel {
             color: transparent; font-size: var(--fs-sm); margin-top: 4px; font-weight: 600;
