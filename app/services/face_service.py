@@ -13,17 +13,23 @@ class FaceService:
         # OpenCV wheels normally bundle this file, but some slim/container
         # environments omit the data directory. Do not make the whole API
         # unavailable when the optional detector asset is missing.
-        cascade_paths = [
-            os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"),
-            os.path.join(os.path.dirname(cv2.__file__), "data", "haarcascade_frontalface_default.xml"),
-        ]
+        cascade_paths = []
+        if hasattr(cv2, "data") and hasattr(cv2, "CascadeClassifier"):
+            cascade_paths.append(
+                os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+            )
+        if hasattr(cv2, "CascadeClassifier"):
+            cascade_paths.append(
+                os.path.join(os.path.dirname(cv2.__file__), "data", "haarcascade_frontalface_default.xml")
+            )
         self.face_cascade = None
-        for cascade_path in cascade_paths:
-            if os.path.isfile(cascade_path):
-                candidate = cv2.CascadeClassifier(cascade_path)
-                if not candidate.empty():
-                    self.face_cascade = candidate
-                    break
+        if hasattr(cv2, "CascadeClassifier"):
+            for cascade_path in cascade_paths:
+                if os.path.isfile(cascade_path):
+                    candidate = cv2.CascadeClassifier(cascade_path)
+                    if not candidate.empty():
+                        self.face_cascade = candidate
+                        break
         if self.face_cascade is None:
             print("WARNING: OpenCV Haar cascade is unavailable; using full-image embedding fallback.", flush=True)
         self.embedder = FaceNet()
